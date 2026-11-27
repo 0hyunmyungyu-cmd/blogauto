@@ -780,6 +780,31 @@
           <!-- [상태 3] 생성 완료 결과 상태 -->
           <div id="resultState" class="hidden flex-1 flex flex-col">
 
+            <!-- 상단 사진생성용 텍스트 (1~10 한 번에 복사) 영역 -->
+            <div id="photoPromptBox" class="hidden p-5 sm:p-6 bg-amber-50/50 border-b border-slate-200/80 space-y-2.5">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="text-xs font-extrabold text-amber-900 flex items-center gap-1.5">
+                  <span>🎨</span>
+                  <span>사진생성용 텍스트 (1 ~ 10 한 번에 복사)</span>
+                </span>
+                <button
+                  type="button"
+                  id="copyAllPhotoPromptsBtn"
+                  class="px-3 py-1.5 rounded-xl text-xs font-extrabold text-white bg-amber-600 hover:bg-amber-700 active:scale-[0.98] transition flex items-center gap-1.5 shadow-sm"
+                >
+                  <span>📋</span>
+                  <span>1~10 전체 복사</span>
+                </button>
+              </div>
+              <textarea
+                id="photoPromptTextArea"
+                rows="6"
+                readonly
+                class="w-full px-3.5 py-2.5 rounded-xl border border-amber-200 bg-white focus:border-amber-400 outline-none text-xs text-slate-800 leading-relaxed font-mono resize-y"
+                placeholder="생성 사진 1~10용 프롬프트 텍스트가 여기에 표시됩니다."
+              ></textarea>
+            </div>
+
             <!-- 추천 제목 3종 선택 & 제목 복사 영역 -->
             <div class="p-5 sm:p-6 bg-emerald-50/40 border-b border-slate-200/80">
               <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -1042,6 +1067,7 @@
       currentSourceLabel: '',
       currentPostSources: [],
       generatedImages: [], // 실시간 뜨는 주제용 직접 생성 이미지 10장 [{ index, caption, dataUrl, base64, isFallback }]
+      photoPromptTexts: [], // 상단 한 번에 복사할 사진생성용 텍스트 1~10 목록
       selectedTitleIndex: 0,
       fixedOutro: DEFAULT_FIXED_OUTRO,
       history: [],
@@ -1123,6 +1149,9 @@
       step2: document.getElementById('step2'),
       step3: document.getElementById('step3'),
       resultState: document.getElementById('resultState'),
+      photoPromptBox: document.getElementById('photoPromptBox'),
+      photoPromptTextArea: document.getElementById('photoPromptTextArea'),
+      copyAllPhotoPromptsBtn: document.getElementById('copyAllPhotoPromptsBtn'),
       copySelectedTitleBtn: document.getElementById('copySelectedTitleBtn'),
       regenerateBtn: document.getElementById('regenerateBtn'),
       titleChoices: document.getElementById('titleChoices'),
@@ -2763,6 +2792,7 @@
       renderPostResult(postData, safeSources, {
         photos: activePhotos,
         generatedPhotos,
+        photoPromptTexts: state.photoPromptTexts,
         sourceLabel,
       });
     }
@@ -3509,6 +3539,13 @@
         }
       }
 
+      const promptLines = cards.map((cardItem, idx) => {
+        const num = idx + 1;
+        const cap = String(cardItem?.caption || tenCaptions[idx] || '').trim();
+        return `🖼️ 생성 사진 ${num} / 10: ${cap}`;
+      });
+      state.photoPromptTexts = promptLines;
+
       return cards;
     }
 
@@ -3647,6 +3684,23 @@
         el.generatedSourceTag.classList.remove('hidden');
       } else {
         el.generatedSourceTag.classList.add('hidden');
+      }
+
+      // 상단 사진생성용 텍스트(1~10) 영역 업데이트 (트렌드 10장 생성 시 표시, 사진 리뷰 시 숨김)
+      const promptLinesToShow = Array.isArray(options.photoPromptTexts) && options.photoPromptTexts.length > 0
+        ? options.photoPromptTexts
+        : (generatedPhotos.length > 0
+            ? generatedPhotos.map((g, idx) => `🖼️ 생성 사진 ${g.index || (idx + 1)} / 10: ${String(g.caption || '').trim()}`)
+            : []);
+
+      if (el.photoPromptBox && el.photoPromptTextArea) {
+        if (promptLinesToShow.length > 0) {
+          el.photoPromptTextArea.value = promptLinesToShow.join('\n');
+          el.photoPromptBox.classList.remove('hidden');
+        } else {
+          el.photoPromptTextArea.value = '';
+          el.photoPromptBox.classList.add('hidden');
+        }
       }
 
       const titles = Array.isArray(safePost.titles) && safePost.titles.length > 0 ? safePost.titles : ['추천 블로그 제목'];
@@ -3972,6 +4026,21 @@
         showToast('선택된 제목을 복사했어요! 📋');
       }
     });
+
+    if (el.copyAllPhotoPromptsBtn && el.photoPromptTextArea) {
+      el.copyAllPhotoPromptsBtn.addEventListener('click', () => {
+        const allText = (el.photoPromptTextArea.value || '').trim();
+        if (!allText) {
+          showToast('복사할 사진생성용 텍스트가 없어요.', 'error');
+          return;
+        }
+        if (copyPlainText(allText)) {
+          showToast('사진생성용 텍스트 1~10 전체를 복사했어요! 📋');
+        } else {
+          showToast('복사에 실패했어요. 텍스트 상자를 선택해 직접 복사해 주세요.', 'error');
+        }
+      });
+    }
 
     // =========================================================================
     // 12. 우측 옵션 토글 & 고정 마무리 멘트 실시간 동기화
@@ -4315,8 +4384,17 @@
       state.currentPostSources = restoredSources;
       state.selectedTitleIndex = 0;
 
+      const histPromptLines = Array.isArray(found.post?.sections)
+        ? Array.from({ length: 10 }, (_, idx) => {
+            const secCap = found.post.sections[idx]?.photoCaption || found.post.sections[idx]?.subtitle || `장면 ${idx + 1}`;
+            return `🖼️ 생성 사진 ${idx + 1} / 10: ${String(secCap).trim()}`;
+          })
+        : [];
+      state.photoPromptTexts = found.meta?.kind === 'trend' ? histPromptLines : [];
+
       renderPostResult(found.post, restoredSources, {
         photos: [],
+        photoPromptTexts: state.photoPromptTexts,
         sourceLabel: state.currentSourceLabel,
       });
 

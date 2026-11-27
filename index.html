@@ -3759,6 +3759,9 @@
             if (gImg && !renderedPhotoIndexes.has(gImg.index)) {
               renderedPhotoIndexes.add(gImg.index);
               const capTxt = (gPos === startGenIdx && sec.photoCaption) ? sec.photoCaption : gImg.caption;
+              const explicitSlotText = capTxt
+                ? `[📷 사진 ${gImg.index} / 10 삽입 위치: ${capTxt}]`
+                : `[📷 사진 ${gImg.index} / 10 삽입 위치]`;
               html += `
                 <div
                   class="photo-slot-card generated-trend-photo"
@@ -3767,18 +3770,19 @@
                   contenteditable="false"
                   style="display:${el.includePhotoGuideToggle.checked ? 'block' : 'none'}; margin:18px 0; padding:12px 14px; background-color:#F0FDF4; border:1.5px solid #6EE7B7; border-radius:12px;"
                 >
-                  <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
-                    <span style="font-size:13px; font-weight:800; color:#047857;">🖼️ 생성 사진 ${gImg.index} / 10${capTxt ? `: ${escapeHtml(capTxt)}` : ''}</span>
+                  <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
+                    <span style="font-size:13.5px; font-weight:800; color:#047857;">${escapeHtml(explicitSlotText)}</span>
                     <button
                       type="button"
                       onclick="window.copySingleGeneratedPhoto(${gImg.index})"
                       style="padding:5px 10px; border-radius:8px; background:#03C75A; color:#ffffff; font-size:11.5px; font-weight:800; border:none; cursor:pointer;"
                     >📋 사진 ${gImg.index} 복사</button>
                   </div>
+                  <p style="font-size:12.5px; font-weight:700; color:#065F46; background:#ECFDF5; padding:6px 10px; border-radius:8px; margin:0 0 10px 0;">${escapeHtml(explicitSlotText)}</p>
                   <img
                     src="${gImg.dataUrl}"
                     data-generated-photo-index="${gImg.index}"
-                    alt="생성 사진 ${gImg.index}"
+                    alt="${escapeHtml(explicitSlotText)}"
                     style="width:100%; max-height:340px; object-fit:cover; border-radius:10px; display:block;"
                   />
                 </div>
@@ -3807,6 +3811,9 @@
       generatedPhotos.forEach((gImg) => {
         if (gImg && !renderedPhotoIndexes.has(gImg.index)) {
           renderedPhotoIndexes.add(gImg.index);
+          const explicitUnplacedText = gImg.caption
+            ? `[📷 사진 ${gImg.index} / 10 삽입 위치: ${gImg.caption}]`
+            : `[📷 사진 ${gImg.index} / 10 삽입 위치]`;
           html += `
             <div
               class="photo-slot-card generated-trend-photo"
@@ -3815,18 +3822,19 @@
               contenteditable="false"
               style="display:${el.includePhotoGuideToggle.checked ? 'block' : 'none'}; margin:18px 0; padding:12px 14px; background-color:#F0FDF4; border:1.5px solid #6EE7B7; border-radius:12px;"
             >
-              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
-                <span style="font-size:13px; font-weight:800; color:#047857;">🖼️ 생성 사진 ${gImg.index} / 10${gImg.caption ? `: ${escapeHtml(gImg.caption)}` : ''}</span>
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
+                <span style="font-size:13.5px; font-weight:800; color:#047857;">${escapeHtml(explicitUnplacedText)}</span>
                 <button
                   type="button"
                   onclick="window.copySingleGeneratedPhoto(${gImg.index})"
                   style="padding:5px 10px; border-radius:8px; background:#03C75A; color:#ffffff; font-size:11.5px; font-weight:800; border:none; cursor:pointer;"
                 >📋 사진 ${gImg.index} 복사</button>
               </div>
+              <p style="font-size:12.5px; font-weight:700; color:#065F46; background:#ECFDF5; padding:6px 10px; border-radius:8px; margin:0 0 10px 0;">${escapeHtml(explicitUnplacedText)}</p>
               <img
                 src="${gImg.dataUrl}"
                 data-generated-photo-index="${gImg.index}"
-                alt="생성 사진 ${gImg.index}"
+                alt="${escapeHtml(explicitUnplacedText)}"
                 style="width:100%; max-height:340px; object-fit:cover; border-radius:10px; display:block;"
               />
             </div>
@@ -4118,10 +4126,17 @@
           if (isGenerated && imgTag && imgTag.src) {
             const wrapper = document.createElement('div');
             wrapper.setAttribute('style', 'margin:18px 0; text-align:center;');
+            const guideLine = document.createElement('p');
+            guideLine.setAttribute(
+              'style',
+              'background-color:#F0FDF4; color:#047857; font-weight:700; padding:10px 14px; border-radius:8px; margin:0 0 10px 0; font-size:14px; text-align:left;'
+            );
+            guideLine.textContent = cap ? `[📷 사진 ${idx} 삽입 위치: ${cap}]` : `[📷 사진 ${idx} 삽입 위치]`;
             const cleanImg = document.createElement('img');
             cleanImg.setAttribute('src', imgTag.src);
             cleanImg.setAttribute('alt', cap || `생성 사진 ${idx}`);
             cleanImg.setAttribute('style', 'max-width:100%; height:auto; border-radius:8px; display:block; margin:0 auto;');
+            wrapper.appendChild(guideLine);
             wrapper.appendChild(cleanImg);
             card.replaceWith(wrapper);
           } else {

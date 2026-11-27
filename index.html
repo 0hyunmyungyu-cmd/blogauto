@@ -3063,105 +3063,309 @@
 
 
     // =========================================================================
-    // 10-B. 실시간 뜨는 주제용 직접 생성 이미지 10장 엔진 (캔버스 그래픽 + Gemini 이미지 생성)
+    // 10-B. 실시간 뜨는 주제용 실사/실제 이미지 10장 생성 엔진 (Gemini 이미지 생성 + 웹/사진 검색 Fallback + 장면 렌더링)
     // =========================================================================
-    function createDirectGraphicCardDataUrl(topic, index, captionText) {
+    function buildVisualScenePrompt(topic, index, captionText) {
+      const cat = String(topic.category || '생활정보');
+      const title = String(topic.title || '');
+      const kw = String(topic.coreKeyword || (Array.isArray(topic.keywords) ? topic.keywords[0] : '') || '').replace(/^#+/, '');
+      const cap = String(captionText || '').trim();
+
+      let subjectHint = 'clean modern Korean lifestyle scene, natural daylight, realistic photography, high detail, no text overlays, no watermarks';
+      if (/보일러|난방|온도|조절기|겨울|결로|습도|매트/.test(title + ' ' + cap + ' ' + kw)) {
+        subjectHint = 'modern Korean apartment living room in winter, digital smart thermostat on wall, warm cozy indoor lighting, realistic editorial photo, no text, no watermark';
+      } else if (/가습기|청소기|마우스|키보드|충전기|태블릿|전자|가전|IT/.test(cat + ' ' + title + ' ' + cap)) {
+        subjectHint = 'sleek modern home appliance or desk gadget on a clean table in a bright Korean home, realistic product photography, soft natural shadows, no text, no watermark';
+      } else if (/맛집|밀키트|음식|먹거리|카페|피자|파스타|방어|간식/.test(cat + ' ' + title + ' ' + cap)) {
+        subjectHint = 'appetizing Korean meal and table setting in warm natural light, realistic food photography, shallow depth of field, no text, no watermark';
+      } else if (/숙소|여행|풀빌라|온천|호캉스|캠핑/.test(cat + ' ' + title + ' ' + cap)) {
+        subjectHint = 'inviting Korean travel staycation or warm resort lounge with scenic view, realistic travel photography, natural daylight, no text, no watermark';
+      } else if (/살림|생활용품|세제|정리|수납|세탁/.test(cat + ' ' + title + ' ' + cap)) {
+        subjectHint = 'neatly organized bright Korean home interior and everyday household items, realistic interior photography, no text, no watermark';
+      }
+
+      return `Realistic photograph for blog article "${title}" (topic: ${kw || cat}, scene ${index}/10: ${cap || kw}). ${subjectHint}.`;
+    }
+
+    function buildPhotoSearchKeywords(topic, index, captionText) {
+      const cat = String(topic.category || '').trim();
+      const kw = String(topic.coreKeyword || (Array.isArray(topic.keywords) ? topic.keywords[0] : '') || '').replace(/^#+/, '').trim();
+      const cap = String(captionText || '').trim();
+
+      const queries = [];
+      if (kw && cap) queries.push(`${kw} ${cap}`);
+      if (kw) queries.push(`${kw} 사진`);
+      if (cap) queries.push(cap);
+      if (cat && cat !== '전체 핫이슈') queries.push(`${cat} 사진`);
+      queries.push(`lifestyle photography ${index}`);
+      return queries;
+    }
+
+    function loadImageFromUrlToDataUrl(url, timeoutMs = 4500) {
+      return new Promise((resolve) => {
+        if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+          resolve('');
+          return;
+        }
+        let settled = false;
+        const done = (val) => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolve(val || '');
+          }
+        };
+        const timer = setTimeout(() => done(''), timeoutMs);
+
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          try {
+            if (!img.width || !img.height) {
+              done('');
+              return;
+            }
+            const canvas = document.createElement('canvas');
+            const maxW = 960;
+            let w = img.width;
+            let h = img.height;
+            if (w > maxW) {
+              h = Math.round((h * maxW) / w);
+              w = maxW;
+            }
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+            done(canvas.toDataURL('image/jpeg', 0.86));
+          } catch (_) {
+            done('');
+          }
+        };
+        img.onerror = () => done('');
+        img.src = url;
+      });
+    }
+
+    async function searchMatchedPhotosForTopic(topic, tenCaptions) {
+      const kw = String(topic.coreKeyword || (Array.isArray(topic.keywords) ? topic.keywords[0] : '') || topic.category || 'lifestyle')
+        .replace(/^#+/, '')
+        .trim();
+      const candidateUrls = [];
+      const seen = new Set();
+
+      const addCandidate = (u) => {
+        if (typeof u === 'string' && /^https?:\/\//i.test(u.trim())) {
+          const clean = u.trim();
+          if (!seen.has(clean) && !/doubleclick|googlesyndication|adservice|favicon/i.test(clean)) {
+            seen.add(clean);
+            candidateUrls.push(clean);
+          }
+        }
+      };
+
+      // 1) Gemini Search Grounding으로 주제 관련 이미지 URL 수집 시도
+      const activeKey = state.userApiKey.trim() || runtimeApiKey;
+      if (activeKey && state.mode !== 'offline') {
+        try {
+          const queryPrompt = `Find direct image URLs (jpg/jpeg/png/webp) related to "${kw}" and "${topic.title}". Return JSON array of image URLs only: {"images":["https://..."]}`;
+          const searchRes = await invokeGemini({
+            payload: {
+              contents: [{ role: 'user', parts: [{ text: queryPrompt }] }],
+            },
+            useSearch: true,
+          });
+          const urlMatches = String(searchRes.text || '').match(/https?:\/\/[^\s"'<>)\]]+\.(?:jpg|jpeg|png|webp)(?:\?[^\s"'<>)\]]*)?/gi) || [];
+          urlMatches.forEach(addCandidate);
+
+          (searchRes.sources || []).forEach((srcItem) => {
+            if (srcItem?.uri && /\.(?:jpg|jpeg|png|webp)/i.test(srcItem.uri)) {
+              addCandidate(srcItem.uri);
+            }
+          });
+        } catch (_) {}
+      }
+
+      // 2) Wikimedia Commons / Openverse 공개 사진 검색 API로 주제 키워드 사진 자동 탐색
+      const searchTerms = Array.from(
+        new Set([
+          kw,
+          `${kw} ${tenCaptions[0] || ''}`.trim(),
+          String(topic.category || '').replace('·', ' ').trim(),
+        ].filter(Boolean))
+      );
+
+      for (let t = 0; t < searchTerms.length && candidateUrls.length < 18; t++) {
+        const term = searchTerms[t];
+        try {
+          const wikiUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(term)}&gsrlimit=8&prop=imageinfo&iiprop=url&iiurlwidth=960&format=json&origin=*`;
+          const resp = await fetch(wikiUrl);
+          if (resp.ok) {
+            const json = await resp.json();
+            const pages = json?.query?.pages ? Object.values(json.query.pages) : [];
+            pages.forEach((pg) => {
+              const info = pg?.imageinfo?.[0];
+              const u = info?.thumburl || info?.url;
+              if (u && /\.(?:jpg|jpeg|png|webp)/i.test(u)) {
+                addCandidate(u);
+              }
+            });
+          }
+        } catch (_) {}
+      }
+
+      // 실제 CORS 로드가 가능한 사진만 DataURL로 변환해 확보
+      const verifiedPhotos = [];
+      for (let i = 0; i < candidateUrls.length && verifiedPhotos.length < 10; i++) {
+        const dataUrl = await loadImageFromUrlToDataUrl(candidateUrls[i], 4000);
+        if (dataUrl) {
+          verifiedPhotos.push({
+            dataUrl,
+            base64: dataUrl.split(',')[1] || '',
+            isFallback: false,
+            sourceType: 'matched-search',
+          });
+        }
+      }
+
+      return verifiedPhotos;
+    }
+
+    function createRealisticSceneFallbackDataUrl(topic, index, captionText) {
       const canvas = document.createElement('canvas');
       canvas.width = 960;
       canvas.height = 640;
       const ctx = canvas.getContext('2d');
 
-      const palettes = [
-        { bg1: '#064e3b', bg2: '#03C75A', accent: '#FFF3A1', tagBg: '#022c22', tagText: '#a7f3d0' },
-        { bg1: '#0f172a', bg2: '#047857', accent: '#34d399', tagBg: '#1e293b', tagText: '#6ee7b7' },
-        { bg1: '#1e1b4b', bg2: '#059669', accent: '#fde68a', tagBg: '#312e81', tagText: '#fde68a' },
-        { bg1: '#134e4a', bg2: '#0d9488', accent: '#fef08a', tagBg: '#042f2e', tagText: '#99f6e4' },
-        { bg1: '#18181b', bg2: '#03C75A', accent: '#a7f3d0', tagBg: '#27272a', tagText: '#86efac' },
-      ];
-      const pal = palettes[(index - 1) % palettes.length];
+      const title = String(topic.title || '');
+      const cap = String(captionText || '');
+      const isBoiler = /보일러|난방|온도|조절기|외출|예약/.test(title + ' ' + cap);
 
-      const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-      grad.addColorStop(0, pal.bg1);
-      grad.addColorStop(1, pal.bg2);
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      if (isBoiler) {
+        const wallGrad = ctx.createLinearGradient(0, 0, 0, 640);
+        wallGrad.addColorStop(0, '#f3efe6');
+        wallGrad.addColorStop(0.72, '#e8e2d5');
+        wallGrad.addColorStop(0.72, '#c8a97e');
+        wallGrad.addColorStop(1, '#a9875a');
+        ctx.fillStyle = wallGrad;
+        ctx.fillRect(0, 0, 960, 640);
 
-      // 장식 원형 하이라이트
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
-      ctx.beginPath();
-      ctx.arc(820, 120, 220, 0, Math.PI * 2);
-      ctx.fill();
+        const winGrad = ctx.createLinearGradient(560, 70, 880, 340);
+        winGrad.addColorStop(0, '#fffbeb');
+        winGrad.addColorStop(1, '#bae6fd');
+        ctx.fillStyle = winGrad;
+        ctx.beginPath();
+        ctx.roundRect(570, 75, 310, 250, 16);
+        ctx.fill();
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 8;
+        ctx.stroke();
 
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
-      ctx.beginPath();
-      ctx.arc(150, 560, 260, 0, Math.PI * 2);
-      ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(725, 75);
+        ctx.lineTo(725, 325);
+        ctx.moveTo(570, 200);
+        ctx.lineTo(880, 200);
+        ctx.stroke();
 
-      // 상단 뱃지
-      const catLabel = `${topic.category || '인기주제'} · ${String(index).padStart(2, '0')} / 10`;
-      ctx.fillStyle = pal.tagBg;
-      ctx.beginPath();
-      ctx.roundRect(56, 52, 340, 44, 14);
-      ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = 'rgba(15, 23, 42, 0.16)';
+        ctx.shadowBlur = 24;
+        ctx.shadowOffsetY = 10;
+        ctx.beginPath();
+        ctx.roundRect(140, 120, 270, 210, 24);
+        ctx.fill();
+        ctx.shadowColor = 'transparent';
 
-      ctx.fillStyle = pal.tagText;
-      ctx.font = 'bold 20px "Pretendard", "Noto Sans KR", sans-serif';
-      ctx.fillText(catLabel, 76, 81);
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 2;
+        ctx.stroke();
 
-      // 핵심 키워드 태그
-      const kw = String(topic.coreKeyword || (Array.isArray(topic.keywords) ? topic.keywords[0] : '') || '핵심포인트').replace(/^#+/, '');
-      ctx.fillStyle = pal.accent;
-      ctx.font = 'bold 22px "Pretendard", "Noto Sans KR", sans-serif';
-      ctx.fillText(`#${kw}`, 56, 142);
+        const lcdColor = (index % 2 === 1) ? '#0f172a' : '#064e3b';
+        ctx.fillStyle = lcdColor;
+        ctx.beginPath();
+        ctx.roundRect(166, 144, 218, 112, 14);
+        ctx.fill();
 
-      // 메인 제목 줄바꿈
-      const mainTitle = String(topic.title || '블로그 핵심 포인트');
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 42px "Pretendard", "Noto Sans KR", sans-serif';
+        ctx.fillStyle = '#34d399';
+        ctx.font = 'bold 16px "Pretendard", "Noto Sans KR", sans-serif';
+        ctx.fillText((index % 2 === 1) ? 'OUTING MODE · 16°C' : 'SCHEDULE MODE · 22°C', 184, 174);
 
-      const drawWrappedText = (text, x, y, maxWidth, lineHeight, maxLines) => {
-        const words = text.split(/\s+/);
-        const lines = [];
-        let current = '';
-        for (let i = 0; i < words.length; i++) {
-          const testLine = current ? `${current} ${words[i]}` : words[i];
-          if (ctx.measureText(testLine).width <= maxWidth || !current) {
-            current = testLine;
-          } else {
-            lines.push(current);
-            current = words[i];
-            if (lines.length >= maxLines) break;
-          }
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 42px "Pretendard", "Noto Sans KR", sans-serif';
+        ctx.fillText((index % 2 === 1) ? '16.0°' : '22.0°', 184, 228);
+
+        const btnColors = ['#e2e8f0', '#dcfce7', '#fef3c7', '#e0f2fe'];
+        for (let b = 0; b < 4; b++) {
+          ctx.fillStyle = btnColors[b];
+          ctx.beginPath();
+          ctx.roundRect(172 + b * 53, 272, 44, 34, 8);
+          ctx.fill();
         }
-        if (current && lines.length < maxLines) lines.push(current);
-        lines.forEach((lineStr, idx) => {
-          ctx.fillText(lineStr, x, y + idx * lineHeight);
-        });
-        return y + lines.length * lineHeight;
-      };
 
-      const afterTitleY = drawWrappedText(mainTitle, 56, 205, 848, 56, 3);
+        ctx.fillStyle = '#64748b';
+        ctx.beginPath();
+        ctx.roundRect(110, 420, 430, 95, 22);
+        ctx.fill();
+        ctx.fillStyle = '#475569';
+        ctx.beginPath();
+        ctx.roundRect(125, 385, 400, 48, 16);
+        ctx.fill();
+      } else {
+        const bgGrad = ctx.createLinearGradient(0, 0, 960, 640);
+        const themes = [
+          ['#f8fafc', '#dcfce7', '#059669'],
+          ['#fffbeb', '#fef3c7', '#d97706'],
+          ['#f0f9ff', '#e0f2fe', '#0284c7'],
+          ['#fdf4ff', '#fae8ff', '#9333ea'],
+          ['#f0fdf4', '#ccfbf1', '#0d9488'],
+        ];
+        const th = themes[(index - 1) % themes.length];
+        bgGrad.addColorStop(0, th[0]);
+        bgGrad.addColorStop(1, th[1]);
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, 960, 640);
 
-      // 하단 카드 박스 (사진/포인트 안내)
-      const boxY = Math.max(afterTitleY + 28, 395);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-      ctx.beginPath();
-      ctx.roundRect(56, boxY, 848, 175, 22);
-      ctx.fill();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
+        ctx.beginPath();
+        ctx.arc(730, 210, 190, 0, Math.PI * 2);
+        ctx.fill();
 
-      ctx.fillStyle = '#047857';
-      ctx.font = 'bold 20px "Pretendard", "Noto Sans KR", sans-serif';
-      ctx.fillText(`📸 생성 이미지 #${index} · 블로그 삽입용`, 84, boxY + 44);
+        ctx.beginPath();
+        ctx.arc(260, 440, 220, 0, Math.PI * 2);
+        ctx.fill();
 
-      ctx.fillStyle = '#111827';
-      ctx.font = 'bold 27px "Pretendard", "Noto Sans KR", sans-serif';
-      const capDisplay = captionText || `${kw} 핵심 요약 이미지 ${index}`;
-      const wrappedCap = capDisplay.length > 44 ? `${capDisplay.slice(0, 44)}...` : capDisplay;
-      ctx.fillText(wrappedCap, 84, boxY + 92);
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = 'rgba(15, 23, 42, 0.12)';
+        ctx.shadowBlur = 28;
+        ctx.shadowOffsetY = 12;
+        ctx.beginPath();
+        ctx.roundRect(180, 110, 600, 360, 28);
+        ctx.fill();
+        ctx.shadowColor = 'transparent';
 
-      ctx.fillStyle = '#475569';
-      ctx.font = '600 19px "Pretendard", "Noto Sans KR", sans-serif';
-      ctx.fillText('아빠의 꼼꼼한 리뷰노트 · 클릭 또는 [사진 복사] 후 네이버 에디터에 붙여넣기', 84, boxY + 140);
+        ctx.fillStyle = th[2];
+        ctx.beginPath();
+        ctx.arc(480, 255, 76, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 34px "Pretendard", "Noto Sans KR", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(String(index), 480, 267);
+        ctx.textAlign = 'left';
+
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 26px "Pretendard", "Noto Sans KR", sans-serif';
+        const shortCap = (cap || topic.coreKeyword || '핵심 장면').slice(0, 36);
+        ctx.fillText(shortCap, 225, 385);
+
+        ctx.fillStyle = '#64748b';
+        ctx.font = '600 18px "Pretendard", "Noto Sans KR", sans-serif';
+        ctx.fillText(`${topic.category || '블로그'} · 실사용/정보 이미지 ${index}/10`, 225, 424);
+      }
 
       const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
       return {
@@ -3170,16 +3374,17 @@
         dataUrl,
         base64: dataUrl.split(',')[1] || '',
         isFallback: true,
+        sourceType: 'scene-canvas',
       };
     }
 
     async function tryGenerateAiPhotoForSlot(topic, index, captionText) {
       const activeKey = state.userApiKey.trim() || runtimeApiKey;
       if (!activeKey || state.mode === 'offline') {
-        return createDirectGraphicCardDataUrl(topic, index, captionText);
+        return null;
       }
 
-      const promptText = `Clean editorial lifestyle blog photograph for a Korean blog post about "${topic.title}". Scene ${index} of 10: ${captionText}. Bright natural lighting, crisp composition, no watermarks, no messy text.`;
+      const promptText = buildVisualScenePrompt(topic, index, captionText);
       const models = ['imagen-3.0-generate-002', 'gemini-2.0-flash-exp-image-generation'];
 
       for (let i = 0; i < models.length; i++) {
@@ -3206,6 +3411,7 @@
                 dataUrl: `data:${mime};base64,${b64}`,
                 base64: b64,
                 isFallback: false,
+                sourceType: 'ai-image',
               };
             }
           } else {
@@ -3231,13 +3437,14 @@
                 dataUrl: `data:${mime};base64,${b64}`,
                 base64: b64,
                 isFallback: false,
+                sourceType: 'ai-image',
               };
             }
           }
         } catch (_) {}
       }
 
-      return createDirectGraphicCardDataUrl(topic, index, captionText);
+      return null;
     }
 
     async function generateTenTrendPhotos(topic, postData) {
@@ -3248,16 +3455,16 @@
         .filter(Boolean);
 
       const defaultTenCaptions = [
-        `${mainKw} 대표 핵심 컷`,
-        `${mainKw} 주목받는 이유 요약`,
-        `${mainKw} 선택 기준 #1 실용성`,
-        `${mainKw} 선택 기준 #2 가성비·유지비`,
-        `${mainKw} 선택 기준 #3 사용자 후기`,
-        `${mainKw} 실전 활용 꿀팁 컷`,
-        `${mainKw} 핵심 비교표 요약`,
-        `${mainKw} 주의사항 & 체크포인트`,
-        `${mainKw} 놓치기 쉬운 디테일`,
-        `${mainKw} 한눈에 보는 총정리`,
+        `${mainKw} 대표 장면 컷`,
+        `${mainKw} 실내 환경 컷`,
+        `${mainKw} 상세 설정/디테일 컷`,
+        `${mainKw} 비교 포인트 컷`,
+        `${mainKw} 실사용 장면 컷`,
+        `${mainKw} 활용 팁 컷`,
+        `${mainKw} 체크포인트 컷`,
+        `${mainKw} 주의사항 컷`,
+        `${mainKw} 추가 디테일 컷`,
+        `${mainKw} 마무리 장면 컷`,
       ];
 
       const tenCaptions = [];
@@ -3265,26 +3472,44 @@
         tenCaptions.push(secCaptions[i] || defaultTenCaptions[i]);
       }
 
-      // 1차로 즉시 생성형 캔버스 그래픽 10장을 먼저 보장하고, API 키가 있으면 병렬로 고화질 생성 시도(실패 시 그래픽 카드 자동 유지)
-      const baseCards = tenCaptions.map((cap, idx) => createDirectGraphicCardDataUrl(topic, idx + 1, cap));
+      const cards = tenCaptions.map((cap, idx) => createRealisticSceneFallbackDataUrl(topic, idx + 1, cap));
       const activeKey = state.userApiKey.trim() || runtimeApiKey;
-      if (!activeKey || state.mode === 'offline') {
-        return baseCards;
+
+      // 1단계: AI 이미지 생성 모델 시도
+      const missingIndexes = [];
+      if (activeKey && state.mode !== 'offline') {
+        const aiResults = await Promise.allSettled(
+          tenCaptions.map((cap, idx) => tryGenerateAiPhotoForSlot(topic, idx + 1, cap))
+        );
+        aiResults.forEach((res, idx) => {
+          if (res.status === 'fulfilled' && res.value && res.value.dataUrl) {
+            cards[idx] = res.value;
+          } else {
+            missingIndexes.push(idx);
+          }
+        });
+      } else {
+        for (let i = 0; i < 10; i++) missingIndexes.push(i);
       }
 
-      // 상위 2장만 AI 이미지 시도 후 나머지는 깔끔한 생성 그래픽 카드 적용(속도·안정성 확보)
-      const aiResults = await Promise.allSettled([
-        tryGenerateAiPhotoForSlot(topic, 1, tenCaptions[0]),
-        tryGenerateAiPhotoForSlot(topic, 2, tenCaptions[1]),
-      ]);
-
-      aiResults.forEach((res, idx) => {
-        if (res.status === 'fulfilled' && res.value && res.value.dataUrl) {
-          baseCards[idx] = res.value;
+      // 2단계: 이미지 생성 모델 미응답/실패 슬롯에 대해 주제 맞춤형 사진 검색 fallback 자동 삽입
+      if (missingIndexes.length > 0) {
+        const searchedPhotos = await searchMatchedPhotosForTopic(topic, tenCaptions);
+        for (let s = 0; s < searchedPhotos.length && s < missingIndexes.length; s++) {
+          const slotIdx = missingIndexes[s];
+          const picked = searchedPhotos[s];
+          cards[slotIdx] = {
+            index: slotIdx + 1,
+            caption: tenCaptions[slotIdx],
+            dataUrl: picked.dataUrl,
+            base64: picked.base64,
+            isFallback: false,
+            sourceType: picked.sourceType,
+          };
         }
-      });
+      }
 
-      return baseCards;
+      return cards;
     }
 
     window.copySingleGeneratedPhoto = async function (imgIndex) {
@@ -3294,7 +3519,6 @@
         return;
       }
 
-      // 1) ClipboardItem으로 실제 이미지 바이너리 복사 시도
       try {
         if (navigator.clipboard && typeof navigator.clipboard.write === 'function' && window.ClipboardItem) {
           const resp = await fetch(target.dataUrl);
@@ -3319,7 +3543,6 @@
         }
       } catch (_) {}
 
-      // 2) 폴백: 렌더링된 img 요소를 선택해 execCommand('copy') 시도
       try {
         const imgEl = el.blogEditableBody.querySelector(`img[data-generated-photo-index="${imgIndex}"]`);
         if (imgEl) {

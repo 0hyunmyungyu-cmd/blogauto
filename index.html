@@ -254,9 +254,9 @@
               <div class="flex items-center gap-2">
                 <span class="w-6 h-6 rounded-lg bg-emerald-100 text-emerald-700 text-xs font-extrabold flex items-center justify-center">1</span>
                 <h2 class="text-base font-extrabold text-slate-900">사진 업로드</h2>
-                <span class="text-xs font-medium text-slate-400">(최대 10장)</span>
+                <span class="text-xs font-medium text-slate-400">(최대 20장)</span>
               </div>
-              <span id="photoCountLabel" class="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full">0 / 10</span>
+              <span id="photoCountLabel" class="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full">0 / 20</span>
             </div>
 
             <!-- 드래그 앤 드롭 영역 -->
@@ -726,7 +726,7 @@
                   <h4 class="text-sm font-extrabold text-slate-800">탭 1. 사진·방문 리뷰</h4>
                 </div>
                 <p class="text-xs text-slate-500 leading-relaxed">
-                  사진(최대 10장)과 상호·주소·동행인을 넣으면 <strong>아빠의 꼼꼼한 리뷰노트</strong> 스타일로 실감 나는 후기를 써줘요.
+                  사진(최대 20장)과 상호·주소·동행인을 넣으면 <strong>아빠의 꼼꼼한 리뷰노트</strong> 스타일로 실감 나는 후기를 써줘요.
                 </p>
               </div>
               <div class="p-4 rounded-2xl bg-emerald-50/50 border border-emerald-200/80 space-y-1.5">
@@ -993,7 +993,7 @@
     // =========================================================================
     // 1. 상수 및 전역 상태 (Strict Scope)
     // =========================================================================
-    const MAX_PHOTOS = 10;
+    const MAX_PHOTOS = 20;
     const MAX_HISTORY = 5;
     const API_KEY_STORAGE_KEY = 'gemini_api_key';
     const HISTORY_STORAGE_KEY = 'naver_blog_gen_history_v4';
@@ -1041,6 +1041,7 @@
       currentPost: null,
       currentSourceLabel: '',
       currentPostSources: [],
+      generatedImages: [], // 실시간 뜨는 주제용 직접 생성 이미지 10장 [{ index, caption, dataUrl, base64, isFallback }]
       selectedTitleIndex: 0,
       fixedOutro: DEFAULT_FIXED_OUTRO,
       history: [],
@@ -2697,8 +2698,10 @@
           postSources = Array.isArray(apiResult.sources) ? apiResult.sources : [];
         }
 
+        const tenGeneratedPhotos = await generateTenTrendPhotos(topic, postData);
         finalizeAndRenderPost(postData, postSources, {
           photos: [],
+          generatedPhotos: tenGeneratedPhotos,
           sourceLabel,
           historyMeta: {
             kind: 'trend',
@@ -2728,6 +2731,7 @@
     function finalizeAndRenderPost(postData, sources = [], options = {}) {
       const safeSources = Array.isArray(sources) ? sources : [];
       const activePhotos = Array.isArray(options.photos) ? options.photos : [];
+      const generatedPhotos = Array.isArray(options.generatedPhotos) ? options.generatedPhotos : [];
       const sourceLabel = options.sourceLabel || '';
       const historyMeta = options.historyMeta || { kind: 'photo', category: '블로그', subject: '블로그 원고' };
 
@@ -2739,6 +2743,7 @@
       state.currentPost = postData;
       state.currentSourceLabel = sourceLabel;
       state.currentPostSources = safeSources;
+      state.generatedImages = generatedPhotos;
       state.selectedTitleIndex = 0;
 
       saveToHistory({
@@ -2757,6 +2762,7 @@
 
       renderPostResult(postData, safeSources, {
         photos: activePhotos,
+        generatedPhotos,
         sourceLabel,
       });
     }
@@ -3055,6 +3061,285 @@
       };
     }
 
+
+    // =========================================================================
+    // 10-B. 실시간 뜨는 주제용 직접 생성 이미지 10장 엔진 (캔버스 그래픽 + Gemini 이미지 생성)
+    // =========================================================================
+    function createDirectGraphicCardDataUrl(topic, index, captionText) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 960;
+      canvas.height = 640;
+      const ctx = canvas.getContext('2d');
+
+      const palettes = [
+        { bg1: '#064e3b', bg2: '#03C75A', accent: '#FFF3A1', tagBg: '#022c22', tagText: '#a7f3d0' },
+        { bg1: '#0f172a', bg2: '#047857', accent: '#34d399', tagBg: '#1e293b', tagText: '#6ee7b7' },
+        { bg1: '#1e1b4b', bg2: '#059669', accent: '#fde68a', tagBg: '#312e81', tagText: '#fde68a' },
+        { bg1: '#134e4a', bg2: '#0d9488', accent: '#fef08a', tagBg: '#042f2e', tagText: '#99f6e4' },
+        { bg1: '#18181b', bg2: '#03C75A', accent: '#a7f3d0', tagBg: '#27272a', tagText: '#86efac' },
+      ];
+      const pal = palettes[(index - 1) % palettes.length];
+
+      const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+      grad.addColorStop(0, pal.bg1);
+      grad.addColorStop(1, pal.bg2);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 장식 원형 하이라이트
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.beginPath();
+      ctx.arc(820, 120, 220, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+      ctx.beginPath();
+      ctx.arc(150, 560, 260, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 상단 뱃지
+      const catLabel = `${topic.category || '인기주제'} · ${String(index).padStart(2, '0')} / 10`;
+      ctx.fillStyle = pal.tagBg;
+      ctx.beginPath();
+      ctx.roundRect(56, 52, 340, 44, 14);
+      ctx.fill();
+
+      ctx.fillStyle = pal.tagText;
+      ctx.font = 'bold 20px "Pretendard", "Noto Sans KR", sans-serif';
+      ctx.fillText(catLabel, 76, 81);
+
+      // 핵심 키워드 태그
+      const kw = String(topic.coreKeyword || (Array.isArray(topic.keywords) ? topic.keywords[0] : '') || '핵심포인트').replace(/^#+/, '');
+      ctx.fillStyle = pal.accent;
+      ctx.font = 'bold 22px "Pretendard", "Noto Sans KR", sans-serif';
+      ctx.fillText(`#${kw}`, 56, 142);
+
+      // 메인 제목 줄바꿈
+      const mainTitle = String(topic.title || '블로그 핵심 포인트');
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 42px "Pretendard", "Noto Sans KR", sans-serif';
+
+      const drawWrappedText = (text, x, y, maxWidth, lineHeight, maxLines) => {
+        const words = text.split(/\s+/);
+        const lines = [];
+        let current = '';
+        for (let i = 0; i < words.length; i++) {
+          const testLine = current ? `${current} ${words[i]}` : words[i];
+          if (ctx.measureText(testLine).width <= maxWidth || !current) {
+            current = testLine;
+          } else {
+            lines.push(current);
+            current = words[i];
+            if (lines.length >= maxLines) break;
+          }
+        }
+        if (current && lines.length < maxLines) lines.push(current);
+        lines.forEach((lineStr, idx) => {
+          ctx.fillText(lineStr, x, y + idx * lineHeight);
+        });
+        return y + lines.length * lineHeight;
+      };
+
+      const afterTitleY = drawWrappedText(mainTitle, 56, 205, 848, 56, 3);
+
+      // 하단 카드 박스 (사진/포인트 안내)
+      const boxY = Math.max(afterTitleY + 28, 395);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.beginPath();
+      ctx.roundRect(56, boxY, 848, 175, 22);
+      ctx.fill();
+
+      ctx.fillStyle = '#047857';
+      ctx.font = 'bold 20px "Pretendard", "Noto Sans KR", sans-serif';
+      ctx.fillText(`📸 생성 이미지 #${index} · 블로그 삽입용`, 84, boxY + 44);
+
+      ctx.fillStyle = '#111827';
+      ctx.font = 'bold 27px "Pretendard", "Noto Sans KR", sans-serif';
+      const capDisplay = captionText || `${kw} 핵심 요약 이미지 ${index}`;
+      const wrappedCap = capDisplay.length > 44 ? `${capDisplay.slice(0, 44)}...` : capDisplay;
+      ctx.fillText(wrappedCap, 84, boxY + 92);
+
+      ctx.fillStyle = '#475569';
+      ctx.font = '600 19px "Pretendard", "Noto Sans KR", sans-serif';
+      ctx.fillText('아빠의 꼼꼼한 리뷰노트 · 클릭 또는 [사진 복사] 후 네이버 에디터에 붙여넣기', 84, boxY + 140);
+
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+      return {
+        index,
+        caption: captionText,
+        dataUrl,
+        base64: dataUrl.split(',')[1] || '',
+        isFallback: true,
+      };
+    }
+
+    async function tryGenerateAiPhotoForSlot(topic, index, captionText) {
+      const activeKey = state.userApiKey.trim() || runtimeApiKey;
+      if (!activeKey || state.mode === 'offline') {
+        return createDirectGraphicCardDataUrl(topic, index, captionText);
+      }
+
+      const promptText = `Clean editorial lifestyle blog photograph for a Korean blog post about "${topic.title}". Scene ${index} of 10: ${captionText}. Bright natural lighting, crisp composition, no watermarks, no messy text.`;
+      const models = ['imagen-3.0-generate-002', 'gemini-2.0-flash-exp-image-generation'];
+
+      for (let i = 0; i < models.length; i++) {
+        const m = models[i];
+        try {
+          if (m.startsWith('imagen-')) {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:predict?key=${encodeURIComponent(activeKey)}`;
+            const resp = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                instances: [{ prompt: promptText }],
+                parameters: { sampleCount: 1, aspectRatio: '4:3' },
+              }),
+            });
+            if (!resp.ok) continue;
+            const json = await resp.json();
+            const b64 = json?.predictions?.[0]?.bytesBase64Encoded;
+            const mime = json?.predictions?.[0]?.mimeType || 'image/png';
+            if (b64) {
+              return {
+                index,
+                caption: captionText,
+                dataUrl: `data:${mime};base64,${b64}`,
+                base64: b64,
+                isFallback: false,
+              };
+            }
+          } else {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(activeKey)}`;
+            const resp = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ role: 'user', parts: [{ text: promptText }] }],
+                generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+              }),
+            });
+            if (!resp.ok) continue;
+            const json = await resp.json();
+            const parts = json?.candidates?.[0]?.content?.parts || [];
+            const inlinePart = parts.find((p) => p?.inlineData?.data);
+            if (inlinePart) {
+              const mime = inlinePart.inlineData.mimeType || 'image/jpeg';
+              const b64 = inlinePart.inlineData.data;
+              return {
+                index,
+                caption: captionText,
+                dataUrl: `data:${mime};base64,${b64}`,
+                base64: b64,
+                isFallback: false,
+              };
+            }
+          }
+        } catch (_) {}
+      }
+
+      return createDirectGraphicCardDataUrl(topic, index, captionText);
+    }
+
+    async function generateTenTrendPhotos(topic, postData) {
+      const kws = Array.isArray(topic.keywords) && topic.keywords.length > 0 ? topic.keywords : [topic.coreKeyword || '핵심정보'];
+      const mainKw = String(topic.coreKeyword || kws[0] || '핵심주제').replace(/^#+/, '');
+      const secCaptions = (Array.isArray(postData?.sections) ? postData.sections : [])
+        .map((s) => s?.photoCaption || s?.subtitle || '')
+        .filter(Boolean);
+
+      const defaultTenCaptions = [
+        `${mainKw} 대표 핵심 컷`,
+        `${mainKw} 주목받는 이유 요약`,
+        `${mainKw} 선택 기준 #1 실용성`,
+        `${mainKw} 선택 기준 #2 가성비·유지비`,
+        `${mainKw} 선택 기준 #3 사용자 후기`,
+        `${mainKw} 실전 활용 꿀팁 컷`,
+        `${mainKw} 핵심 비교표 요약`,
+        `${mainKw} 주의사항 & 체크포인트`,
+        `${mainKw} 놓치기 쉬운 디테일`,
+        `${mainKw} 한눈에 보는 총정리`,
+      ];
+
+      const tenCaptions = [];
+      for (let i = 0; i < 10; i++) {
+        tenCaptions.push(secCaptions[i] || defaultTenCaptions[i]);
+      }
+
+      // 1차로 즉시 생성형 캔버스 그래픽 10장을 먼저 보장하고, API 키가 있으면 병렬로 고화질 생성 시도(실패 시 그래픽 카드 자동 유지)
+      const baseCards = tenCaptions.map((cap, idx) => createDirectGraphicCardDataUrl(topic, idx + 1, cap));
+      const activeKey = state.userApiKey.trim() || runtimeApiKey;
+      if (!activeKey || state.mode === 'offline') {
+        return baseCards;
+      }
+
+      // 상위 2장만 AI 이미지 시도 후 나머지는 깔끔한 생성 그래픽 카드 적용(속도·안정성 확보)
+      const aiResults = await Promise.allSettled([
+        tryGenerateAiPhotoForSlot(topic, 1, tenCaptions[0]),
+        tryGenerateAiPhotoForSlot(topic, 2, tenCaptions[1]),
+      ]);
+
+      aiResults.forEach((res, idx) => {
+        if (res.status === 'fulfilled' && res.value && res.value.dataUrl) {
+          baseCards[idx] = res.value;
+        }
+      });
+
+      return baseCards;
+    }
+
+    window.copySingleGeneratedPhoto = async function (imgIndex) {
+      const target = (state.generatedImages || []).find((g) => g.index === imgIndex);
+      if (!target || !target.dataUrl) {
+        showToast('복사할 이미지를 찾지 못했어요.', 'error');
+        return;
+      }
+
+      // 1) ClipboardItem으로 실제 이미지 바이너리 복사 시도
+      try {
+        if (navigator.clipboard && typeof navigator.clipboard.write === 'function' && window.ClipboardItem) {
+          const resp = await fetch(target.dataUrl);
+          const blob = await resp.blob();
+          const pngBlob = blob.type === 'image/png' ? blob : await new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              const c = document.createElement('canvas');
+              c.width = img.width || 960;
+              c.height = img.height || 640;
+              c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+              c.toBlob((b) => resolve(b || blob), 'image/png');
+            };
+            img.onerror = () => resolve(blob);
+            img.src = target.dataUrl;
+          });
+          await navigator.clipboard.write([
+            new ClipboardItem({ [pngBlob.type || 'image/png']: pngBlob }),
+          ]);
+          showToast(`생성 사진 #${imgIndex} 복사 완료! 네이버 블로그에 Ctrl+V 하세요 🖼️`);
+          return;
+        }
+      } catch (_) {}
+
+      // 2) 폴백: 렌더링된 img 요소를 선택해 execCommand('copy') 시도
+      try {
+        const imgEl = el.blogEditableBody.querySelector(`img[data-generated-photo-index="${imgIndex}"]`);
+        if (imgEl) {
+          const range = document.createRange();
+          range.selectNode(imgEl);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          const ok = document.execCommand('copy');
+          sel.removeAllRanges();
+          if (ok) {
+            showToast(`생성 사진 #${imgIndex} 복사 완료! 붙여넣기(Ctrl+V) 해보세요 🖼️`);
+            return;
+          }
+        }
+      } catch (_) {}
+
+      showToast('브라우저 권한상 이미지를 길게 누르거나 우클릭해 [이미지 복사]를 눌러주세요 💡', 'info');
+    };
+
     // =========================================================================
     // 11. 마크업 파싱 & 우측 네이버 블로그 결과 렌더링 (renderPostResult)
     // =========================================================================
@@ -3123,6 +3408,9 @@
       const safePost = postData || {};
       const safeSources = Array.isArray(sources) ? sources : [];
       const activePhotos = Array.isArray(options.photos) ? options.photos : [];
+      const generatedPhotos = Array.isArray(options.generatedPhotos) && options.generatedPhotos.length > 0
+        ? options.generatedPhotos
+        : (Array.isArray(state.generatedImages) ? state.generatedImages : []);
       const sourceLabel = options.sourceLabel || '';
 
       el.emptyState.classList.add('hidden');
@@ -3185,6 +3473,41 @@
           const photoObj = activePhotos[pIdx - 1];
           const captionText = sec.photoCaption || photoObj.caption || `사진 ${pIdx}`;
           html += buildPhotoSlotHtml(pIdx, photoObj.dataUrl, captionText);
+        } else if (generatedPhotos.length > 0) {
+          // 섹션마다 최대 2장씩 10장의 직접 생성 사진을 본문에 고르게 배치
+          const startGenIdx = secIdx * 2;
+          const endGenIdx = secIdx === 3 ? generatedPhotos.length : Math.min(generatedPhotos.length, startGenIdx + 2);
+          for (let gPos = startGenIdx; gPos < endGenIdx; gPos++) {
+            const gImg = generatedPhotos[gPos];
+            if (gImg && !renderedPhotoIndexes.has(gImg.index)) {
+              renderedPhotoIndexes.add(gImg.index);
+              const capTxt = (gPos === startGenIdx && sec.photoCaption) ? sec.photoCaption : gImg.caption;
+              html += `
+                <div
+                  class="photo-slot-card generated-trend-photo"
+                  data-photo-index="${gImg.index}"
+                  data-photo-caption="${escapeHtml(capTxt || '')}"
+                  contenteditable="false"
+                  style="display:${el.includePhotoGuideToggle.checked ? 'block' : 'none'}; margin:18px 0; padding:12px 14px; background-color:#F0FDF4; border:1.5px solid #6EE7B7; border-radius:12px;"
+                >
+                  <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+                    <span style="font-size:13px; font-weight:800; color:#047857;">🖼️ 생성 사진 ${gImg.index} / 10${capTxt ? `: ${escapeHtml(capTxt)}` : ''}</span>
+                    <button
+                      type="button"
+                      onclick="window.copySingleGeneratedPhoto(${gImg.index})"
+                      style="padding:5px 10px; border-radius:8px; background:#03C75A; color:#ffffff; font-size:11.5px; font-weight:800; border:none; cursor:pointer;"
+                    >📋 사진 ${gImg.index} 복사</button>
+                  </div>
+                  <img
+                    src="${gImg.dataUrl}"
+                    data-generated-photo-index="${gImg.index}"
+                    alt="생성 사진 ${gImg.index}"
+                    style="width:100%; max-height:340px; object-fit:cover; border-radius:10px; display:block;"
+                  />
+                </div>
+              `;
+            }
+          }
         } else if (pIdx > 0 && activePhotos.length === 0) {
           html += buildPhotoSlotHtml(pIdx, null, sec.photoCaption || `여기에 관련 사진 삽입 (${secIdx + 1})`);
         }
@@ -3200,6 +3523,37 @@
         if (!renderedPhotoIndexes.has(pIdx)) {
           renderedPhotoIndexes.add(pIdx);
           html += buildPhotoSlotHtml(pIdx, photoObj.dataUrl, photoObj.caption || `추가 현장 사진 ${pIdx}`);
+        }
+      });
+
+      // 미배치 생성 사진(1~10장) 자동 보충
+      generatedPhotos.forEach((gImg) => {
+        if (gImg && !renderedPhotoIndexes.has(gImg.index)) {
+          renderedPhotoIndexes.add(gImg.index);
+          html += `
+            <div
+              class="photo-slot-card generated-trend-photo"
+              data-photo-index="${gImg.index}"
+              data-photo-caption="${escapeHtml(gImg.caption || '')}"
+              contenteditable="false"
+              style="display:${el.includePhotoGuideToggle.checked ? 'block' : 'none'}; margin:18px 0; padding:12px 14px; background-color:#F0FDF4; border:1.5px solid #6EE7B7; border-radius:12px;"
+            >
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+                <span style="font-size:13px; font-weight:800; color:#047857;">🖼️ 생성 사진 ${gImg.index} / 10${gImg.caption ? `: ${escapeHtml(gImg.caption)}` : ''}</span>
+                <button
+                  type="button"
+                  onclick="window.copySingleGeneratedPhoto(${gImg.index})"
+                  style="padding:5px 10px; border-radius:8px; background:#03C75A; color:#ffffff; font-size:11.5px; font-weight:800; border:none; cursor:pointer;"
+                >📋 사진 ${gImg.index} 복사</button>
+              </div>
+              <img
+                src="${gImg.dataUrl}"
+                data-generated-photo-index="${gImg.index}"
+                alt="생성 사진 ${gImg.index}"
+                style="width:100%; max-height:340px; object-fit:cover; border-radius:10px; display:block;"
+              />
+            </div>
+          `;
         }
       });
 
@@ -3462,18 +3816,31 @@
       const includeFixedOutro = el.includeFixedOutroToggle.checked;
       const clone = el.blogEditableBody.cloneNode(true);
 
-      // 사진 위치 안내 카드 처리
+      // 사진 위치 안내 카드 및 직접 생성 사진(10장) 처리
       clone.querySelectorAll('.photo-slot-card').forEach((card) => {
+        const isGenerated = card.classList.contains('generated-trend-photo');
+        const imgTag = card.querySelector('img');
         if (includePhotoGuide) {
           const idx = card.getAttribute('data-photo-index');
           const cap = card.getAttribute('data-photo-caption') || '';
-          const markerP = document.createElement('p');
-          markerP.setAttribute(
-            'style',
-            'background-color:#F0FDF4; color:#047857; font-weight:700; padding:10px 14px; border-radius:8px; margin:18px 0; font-size:14px;'
-          );
-          markerP.textContent = cap ? `[📷 사진 ${idx} 삽입 위치: ${cap}]` : `[📷 사진 ${idx} 삽입 위치]`;
-          card.replaceWith(markerP);
+          if (isGenerated && imgTag && imgTag.src) {
+            const wrapper = document.createElement('div');
+            wrapper.setAttribute('style', 'margin:18px 0; text-align:center;');
+            const cleanImg = document.createElement('img');
+            cleanImg.setAttribute('src', imgTag.src);
+            cleanImg.setAttribute('alt', cap || `생성 사진 ${idx}`);
+            cleanImg.setAttribute('style', 'max-width:100%; height:auto; border-radius:8px; display:block; margin:0 auto;');
+            wrapper.appendChild(cleanImg);
+            card.replaceWith(wrapper);
+          } else {
+            const markerP = document.createElement('p');
+            markerP.setAttribute(
+              'style',
+              'background-color:#F0FDF4; color:#047857; font-weight:700; padding:10px 14px; border-radius:8px; margin:18px 0; font-size:14px;'
+            );
+            markerP.textContent = cap ? `[📷 사진 ${idx} 삽입 위치: ${cap}]` : `[📷 사진 ${idx} 삽입 위치]`;
+            card.replaceWith(markerP);
+          }
         } else {
           card.remove();
         }

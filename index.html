@@ -42,6 +42,11 @@
       background-color: #f8fafc;
       color: #111827;
       -webkit-font-smoothing: antialiased;
+      touch-action: manipulation;
+    }
+    button, a, label, input, select, textarea, [role="button"] {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
     }
 
     /* 스크롤바 스타일 */
@@ -1066,7 +1071,6 @@
       currentPost: null,
       currentSourceLabel: '',
       currentPostSources: [],
-      generatedImages: [], // 실시간 뜨는 주제용 직접 생성 이미지 10장 [{ index, caption, dataUrl, base64, isFallback }]
       photoPromptTexts: [], // 상단 한 번에 복사할 사진생성용 텍스트 1~10 목록
       selectedTitleIndex: 0,
       fixedOutro: DEFAULT_FIXED_OUTRO,
@@ -2562,7 +2566,7 @@
 
               <button
                 type="button"
-                onclick="generatePostFromTrend(${idx})"
+                data-trend-idx="${idx}"
                 class="w-full py-2.5 px-4 rounded-xl bg-emerald-50 hover:bg-[#03C75A] text-emerald-800 hover:text-white border border-emerald-200 hover:border-[#03C75A] font-extrabold text-xs sm:text-sm transition active:scale-[0.99] flex items-center justify-center gap-1.5"
               >
                 <span>⚡</span>
@@ -2660,12 +2664,12 @@
    - 굵은 글씨: **텍스트**
    - 노란 형광펜 강조(섹션당 1~2회): ==텍스트==
    - 네이버 그린 강조(핵심 키워드·제품명·수치): [[텍스트]]
-4. 구조:
+4. 구조(사진 10장 분량에 맞춘 넉넉하고 충실한 장문 포스팅):
    - 추천 제목 3개 (SEO 핵심 키워드 앞배치 + 클릭 유도 훅)
-   - 도입부 2~3문단 (지금 왜 이 주제가 핫한지 공감)
-   - 본문 섹션 4개 (각 섹션마다 소제목, 인용구, 관련 사진 삽입 안내 photoCaption, 짧은 문단 3~4개)
-   - 핵심 비교표(comparisonTable: headers 3개, rows 3~4개)와 체크리스트(checklist 4개) 반드시 포함
-   - 마무리 2문단 + 해시태그 10~14개
+   - 도입부 3~4문단 (지금 왜 이 주제가 핫한지 공감 + 글에서 다룰 핵심 요약)
+   - 본문 섹션 10개 (photoIndex 1부터 10까지 중복 없이 1~10번을 각 섹션에 1개씩 배치! 각 섹션마다 소제목, 인용구, 구체적인 사진 삽입 안내 photoCaption, 짧은 문단 3~4개 작성)
+   - 핵심 비교표(comparisonTable: headers 3~4개, rows 3~5개)와 체크리스트(checklist 4~5개)는 반드시 이 주제의 본문 내용과 100% 일치하는 실제 항목으로 작성할 것! (예: 보일러 외출모드 vs 예약모드 주제면 외출모드·예약모드·실내온도유지 비교표 작성. 절대 '관리·세척 난이도', '초기 비용', 'AS·품질' 같은 주제와 무관한 범용 제품 구매 문구를 넣지 말 것!)
+   - 마무리 3문단 + 해시태그 12~15개
 5. 반드시 순수 JSON 형식만 출력하고 앞뒤에 어떤 설명도 쓰지 마.
           `.trim();
 
@@ -2684,11 +2688,11 @@
   "introParagraphs": ["도입 문단 1", "도입 문단 2"],
   "sections": [
     {
-      "subtitle": "이모지 포함 소제목",
+      "subtitle": "이모지 포함 소제목 (총 6~10개 섹션으로 구성하고 photoIndex 1~10을 모두 포함)",
       "quote": "독자 시선을 잡는 핵심 인용구 1문장",
       "photoIndex": 1,
-      "photoCaption": "여기에 관련 사진 삽입 (예: 핵심 비교 이미지 또는 실사용 컷)",
-      "paragraphs": ["짧은 문단 1", "짧은 문단 2", "짧은 문단 3"]
+      "photoCaption": "해당 위치에 들어갈 구체적인 사진 설명 (1~10번까지 모두 작성)",
+      "paragraphs": ["짧은 문단 1", "짧은 문단 2", "짧은 문단 3", "짧은 문단 4"]
     }
   ],
   "comparisonTable": {
@@ -2727,10 +2731,32 @@
           postSources = Array.isArray(apiResult.sources) ? apiResult.sources : [];
         }
 
-        const tenGeneratedPhotos = await generateTenTrendPhotos(topic, postData);
+        // 사진생성용 텍스트(1~10) 생성
+        const kws = Array.isArray(topic.keywords) && topic.keywords.length > 0 ? topic.keywords : [topic.coreKeyword || '핵심정보'];
+        const mainKw = String(topic.coreKeyword || kws[0] || '핵심주제').replace(/^#+/, '');
+        const secCaptions = (Array.isArray(postData?.sections) ? postData.sections : [])
+          .map((s) => s?.photoCaption || s?.subtitle || '')
+          .filter(Boolean);
+        const defaultTenCaptions = [
+          `${mainKw} 대표 장면 컷`,
+          `${mainKw} 실내 환경 컷`,
+          `${mainKw} 상세 설정/디테일 컷`,
+          `${mainKw} 비교 포인트 컷`,
+          `${mainKw} 실사용 장면 컷`,
+          `${mainKw} 활용 팁 컷`,
+          `${mainKw} 체크포인트 컷`,
+          `${mainKw} 주의사항 컷`,
+          `${mainKw} 추가 디테일 컷`,
+          `${mainKw} 마무리 장면 컷`,
+        ];
+        state.photoPromptTexts = Array.from({ length: 10 }, (_, idx) => {
+          const cap = String(secCaptions[idx] || defaultTenCaptions[idx] || '').trim();
+          return `🖼️ 생성 사진 ${idx + 1} / 10: ${cap}`;
+        });
+
         finalizeAndRenderPost(postData, postSources, {
           photos: [],
-          generatedPhotos: tenGeneratedPhotos,
+          photoPromptTexts: state.photoPromptTexts,
           sourceLabel,
           historyMeta: {
             kind: 'trend',
@@ -2760,7 +2786,6 @@
     function finalizeAndRenderPost(postData, sources = [], options = {}) {
       const safeSources = Array.isArray(sources) ? sources : [];
       const activePhotos = Array.isArray(options.photos) ? options.photos : [];
-      const generatedPhotos = Array.isArray(options.generatedPhotos) ? options.generatedPhotos : [];
       const sourceLabel = options.sourceLabel || '';
       const historyMeta = options.historyMeta || { kind: 'photo', category: '블로그', subject: '블로그 원고' };
 
@@ -2772,7 +2797,6 @@
       state.currentPost = postData;
       state.currentSourceLabel = sourceLabel;
       state.currentPostSources = safeSources;
-      state.generatedImages = generatedPhotos;
       state.selectedTitleIndex = 0;
 
       saveToHistory({
@@ -2791,7 +2815,6 @@
 
       renderPostResult(postData, safeSources, {
         photos: activePhotos,
-        generatedPhotos,
         photoPromptTexts: state.photoPromptTexts,
         sourceLabel,
       });
@@ -2993,76 +3016,374 @@
       const kws = Array.isArray(topic.keywords) && topic.keywords.length > 0 ? topic.keywords : [topic.category || '인기주제', '추천', '꿀팁'];
       const mainKw = String(topic.coreKeyword || kws[0] || '추천').replace(/^#+/, '');
       const tp = getTonePresets(tone, topic.title, '가족·독자분들', '1명');
+      const fullText = `${topic.title || ''} ${topic.category || ''} ${mainKw} ${kws.join(' ')}`;
 
-      return {
-        titles: [
-          `${topic.title} — 핵심 정리 및 실전 추천 가이드 ✨`,
-          `요즘 왜 이렇게 핫할까? ${mainKw} 실패 없이 고르는 3가지 기준 📌`,
-          `필독 정리! ${topic.title} 장단점 비교 총정리 💡`,
-        ],
-        introParagraphs: [
-          `요즘 검색창에서도 자주 보이고 주변에서도 관심이 뜨거운 [[${topic.title}]]!`,
-          `${topic.reason || '실생활에서 바로 도움이 되는 주제라 많은 분들이 찾고 있습니다.'} 오늘은 ==핵심 포인트부터 실패 없는 선택 기준까지== 한눈에 보기 쉽게 정리해 드릴게요 📌`,
-        ],
-        sections: [
+      // 주제/카테고리별 맞춤 비교표·체크리스트·본문 포인트 생성 (내용 불일치 방지)
+      const isHeating = /보일러|난방|외출모드|예약모드|가스비/.test(fullText);
+      const isFinance = /연말정산|소득공제|세액공제|포인트|카드|재테크/.test(fullText);
+      const isFood = /맛집|먹거리|밀키트|외식|대방어|카페|에어프라이어|홈파티/.test(fullText);
+      const isTravel = /여행|숙소|풀빌라|온천|호캉스|캠핑|나들이|호텔/.test(fullText);
+      const isLiving = /결로|단열|주방|정리|건조기|물때|패딩|세탁|선물|살림|생활용품/.test(fullText);
+
+      let comparisonTable;
+      let checklist;
+      let sections;
+      let highlightTip;
+      let oneLineReview;
+
+      if (isHeating) {
+        comparisonTable = {
+          title: '📊 한눈에 보는 보일러 외출모드 vs 예약모드 핵심 비교표',
+          headers: ['비교 항목', '외출모드', '예약모드', '추천 활용 상황'],
+          rows: [
+            ['작동 원리', '동파 방지용 최소 저온 유지', '설정한 시간 간격마다 주기적 가동', '집 단열 상태에 따라 구분 선택'],
+            ['유리한 환경', '단열이 좋은 신축·아파트, 짧은 외출', '외풍이 있는 구축·주택, 한파·장시간 외출', '실내 온도 낙폭이 크면 예약모드 유리'],
+            ['재가열 부담', '집이 크게 식으면 복귀 시 가스 소모 증가', '바닥 냉기를 주기적으로 덜어 재가열 완화', '귀가 후 급격한 온도 상승 방지'],
+            ['추천 설정 팁', '4~6시간 이내 짧은 외출·여행 시 활용', '2~4시간 간격으로 15~20분 가동 세팅', '실내 18~20°C 유지와 병행 점검'],
+          ],
+        };
+        checklist = [
+          '우리 집 단열 상태(신축 아파트 vs 외풍 있는 구축·주택) 먼저 파악하기',
+          '외출 시간이 짧으면 1~2도 낮춤·외출모드, 강추위·장시간이면 예약모드 활용하기',
+          '귀가 직후 설정 온도를 26~28°C로 확 올리지 않고 20~22°C에서 단계적으로 올리기',
+          '안 쓰는 방 분배기 밸브 조절과 창문 단열·실내 적정 습도(40~60%) 함께 챙기기',
+        ];
+        highlightTip = '보일러를 완전히 껐다 켜기보다 우리 집 단열과 외출 시간에 맞춰 외출모드·예약모드를 구분해 쓰는 것이 가스비 절약의 핵심입니다!';
+        oneLineReview = '외출모드는 짧은 외출·단열 좋은 집, 예약모드는 한파·외풍 있는 집에 맞춰 쓰면 겨울 난방비 폭탄을 확실히 줄일 수 있습니다 ⭐';
+        sections = [
+          {
+            subtitle: '🔥 1. 겨울철 난방비 폭탄, 왜 생길까?',
+            quote: '실내 온도가 바닥까지 뚝 떨어진 뒤 다시 데울 때 가스가 가장 많이 소모됩니다.',
+            photoIndex: 1,
+            photoCaption: '겨울철 거실 보일러 온도조절기 전체 모습',
+            paragraphs: [
+              `한파가 시작되면 보일러를 아끼겠다고 아예 전원을 꺼두고 외출하시는 분들이 많아요 ❄️`,
+              `하지만 벽체와 바닥까지 차갑게 식어버리면 ==귀가 후 다시 온도를 끌어올리는 데 오히려 더 많은 가스==가 쓰인답니다 📌`,
+              `그래서 무조건 끄기보다 **외출모드와 예약모드의 차이**를 알고 우리 집에 맞게 세팅하는 게 중요해요.`,
+            ],
+          },
+          {
+            subtitle: '🎛️ 2. 보일러 외출모드, 정확히 언제 쓰면 좋을까?',
+            quote: '외출모드는 난방 절약보다 동파 방지와 최소 보온 유지가 기본 목적입니다.',
+            photoIndex: 2,
+            photoCaption: '보일러 외출모드 버튼이 표시된 조절기 클로즈업',
+            paragraphs: [
+              `[[외출모드]]는 실내 온도가 일정 수준(보통 8~10°C 안팎) 이하로 내려가지 않도록 최소한만 가동하는 기능이에요 ✔️`,
+              `단열이 잘 되는 아파트에서 ==몇 시간 정도 짧게 집을 비우거나 며칠간 장기간 집을 비울 때== 동파 예방용으로 적합합니다.`,
+              `반대로 우풍이 심한 집에서 한겨울에 외출모드만 믿고 오래 비우면 집이 냉동고처럼 식어버릴 수 있어요.`,
+            ],
+          },
+          {
+            subtitle: '⏰ 3. 보일러 예약모드, 어떻게 세팅해야 효과적일까?',
+            quote: '일정 시간 간격으로 짧게 데워주면 바닥 냉기가 완전히 굳는 것을 막아줍니다.',
+            photoIndex: 3,
+            photoCaption: '보일러 예약모드 시간·간격 설정 화면',
+            paragraphs: [
+              `[[예약모드]]는 2시간·3시간·4시간 등 정해둔 간격마다 15~20분씩 보일러가 돌아 바닥 온기를 유지하는 방식이에요 ⏰`,
+              `단열이 약하거나 외풍이 있는 주택·구축 아파트라면 ==온도가 급락하는 걸 막아주어 재가열 가스비를 줄이는 데== 유리합니다 💡`,
+              `낮에는 3~4시간 간격, 기온이 뚝 떨어지는 새벽에는 2~3시간 간격으로 조절해 두면 한결 따뜻해요.`,
+            ],
+          },
+          {
+            subtitle: '🏠 4. 신축 아파트 vs 구축·주택, 우리 집 맞춤 모드 선택',
+            quote: '남들이 좋다는 설정보다 우리 집 단열 상태가 가장 정확한 기준입니다.',
+            photoIndex: 4,
+            photoCaption: '거실 창문 단열·커튼 및 실내 온도 확인 모습',
+            paragraphs: [
+              `이중창과 단열이 탄탄한 신축 아파트는 외출 시 **현재 온도보다 2~3도만 낮춰두거나 짧은 외출모드**로도 충분한 경우가 많아요 🏢`,
+              `반면 창가 한기가 강하게 들어오는 집은 ==예약모드로 온기 공백을 줄여주는 편==이 체감 온도와 가스비 모두 안정적입니다.`,
+              `특히 아이가 있는 가정이라면 귀가 1시간 전쯤 따뜻한 상태가 되도록 주기를 맞춰두면 감기 예방에도 좋아요.`,
+            ],
+          },
+          {
+            subtitle: '🌡️ 5. 실내 적정 온도와 온수 온도, 이것만 바꿔도 절약!',
+            quote: '설정 온도 1도 차이만으로도 한 달 난방비 체감이 크게 달라집니다.',
+            photoIndex: 5,
+            photoCaption: '보일러 실내 설정 온도(20~22도) 및 온수 온도 조절 화면',
+            paragraphs: [
+              `겨울철 실내 적정 온도는 **20~22°C** 선으로 두고, 가벼운 실내복이나 수면양말을 함께 챙기면 훨씬 효율적이에요 🧦`,
+              `온수 온도도 '고'로 두면 찬물을 섞어 쓰느라 가스가 낭비되므로 ==중간 온도(40~45°C)==로 맞춰두는 습관이 좋습니다 ✔️`,
+              `외출 후 돌아왔을 때 춥다고 26~28°C까지 확 올리지 말고 21°C부터 천천히 올리는 게 핵심이에요.`,
+            ],
+          },
+          {
+            subtitle: '🔧 6. 안 쓰는 방 난방 분배기 밸브 관리법',
+            quote: '비어 있는 방의 밸브만 조절해도 거실과 안방이 훨씬 빨리 따뜻해집니다.',
+            photoIndex: 6,
+            photoCaption: '싱크대 하단 또는 보일러실 난방 분배기 밸브 모습',
+            paragraphs: [
+              `싱크대 아래나 보일러실에 있는 **난방 분배기**에서 자주 쓰지 않는 방 밸브를 살짝 줄여두면 열 손실을 막을 수 있어요 🔧`,
+              `다만 모든 밸브를 꽉 잠그거나 한파에 아예 차단하면 ==배관 동파 위험==이 생기니 살짝 열어두거나 주기적으로 순환시켜 주세요 ⚠️`,
+              `방별 난방 효율만 맞춰줘도 보일러 가동 시간이 눈에 띄게 줄어듭니다.`,
+            ],
+          },
+          {
+            subtitle: '💧 7. 가습기와 함께 쓰면 체감 온도가 올라가는 이유',
+            quote: '적정 습도(40~60%)를 유지하면 공기 순환이 빨라져 집이 더 빨리 데워집니다.',
+            photoIndex: 7,
+            photoCaption: '거실 가습기 가동 및 실내 온습도계 확인 모습',
+            paragraphs: [
+              `겨울철 실내가 건조하면 같은 21°C라도 서늘하게 느껴져 자꾸 보일러 온도를 올리게 돼요 💧`,
+              `가습기나 젖은 수건으로 ==실내 습도를 40~60%로 유지하면== 공기 중 수분이 열을 오래 머금어 체감 온도가 올라갑니다 ✨`,
+              `난방비 절약은 물론 가족 호흡기 건강까지 함께 챙길 수 있는 일석이조 꿀팁이에요.`,
+            ],
+          },
+          {
+            subtitle: '🪟 8. 창문 외풍 차단(문풍지·뽁뽁이·암막커튼) 효과',
+            quote: '열 손실의 상당 부분은 창문과 현관 틈새에서 빠져나갑니다.',
+            photoIndex: 8,
+            photoCaption: '창문 틈새 문풍지·단열 시트 및 두꺼운 커튼 설치 모습',
+            paragraphs: [
+              `보일러 설정을 아무리 잘해도 창문 틈으로 찬 바람이 들이치면 난방비가 줄지 않아요 🪟`,
+              `창틀 틈새에 **문풍지**를 붙이고 밤에는 **두꺼운 커튼**을 쳐두는 것만으로도 ==실내 온도 하락을 크게 늦출 수== 있습니다 📌`,
+              `현관 중문이 없다면 바람막이 커튼이나 하단 틈새 막이만 추가해도 체감이 확 달라져요.`,
+            ],
+          },
+          {
+            subtitle: '⚠️ 9. 난방비 폭탄 부르는 흔한 실수 3가지',
+            quote: '전원 완전 차단, 최고 온도 급가열, 온수 밸브 방치가 가장 흔한 원인입니다.',
+            photoIndex: 9,
+            photoCaption: '보일러 전원 및 온수 사용 시 주의사항 체크 장면',
+            paragraphs: [
+              `첫째, 매번 외출할 때마다 **보일러 전원을 아예 끄는 습관**은 재가열 가스비와 동파 위험을 키웁니다 ⚠️`,
+              `둘째, 수도꼭지를 온수 방향에 둔 채 짧은 손을 씻으면 ==매번 보일러가 불필요하게 점화==되니 평소엔 냉수 쪽으로 돌려두세요 💡`,
+              `셋째, 1~2년에 한 번쯤 보일러 배관 공기 빼기(에어 빼기)를 점검하면 방바닥이 고르게 따뜻해집니다.`,
+            ],
+          },
+          {
+            subtitle: '📝 10. 한눈에 보는 겨울 보일러 설정 최종 정리',
+            quote: '우리 집 단열·외출 시간·습도 관리 3가지만 기억하시면 올겨울 가스비 걱정 끝!',
+            photoIndex: 10,
+            photoCaption: '겨울철 가스비 고지서 점검 및 보일러 최종 설정 장면',
+            paragraphs: [
+              `오늘 정리해 드린 [[${topic.title}]] 핵심 내용만 적용해도 한 달 뒤 고지서 숫자가 달라지는 걸 체감하실 거예요 ✨`,
+              `아래 **외출모드 vs 예약모드 비교표**와 **체크리스트**를 저장해 두셨다가 한파가 올 때마다 점검해 보세요 📌`,
+              `우리 집만의 최적 설정을 한 번 찾아두면 올겨울 내내 따뜻하고 경제적으로 보내실 수 있습니다!`,
+            ],
+          },
+        ];
+      } else if (isFinance) {
+        comparisonTable = {
+          title: `📊 한눈에 보는 ${mainKw} 핵심 비교표`,
+          headers: ['구분', '주요 공제·혜택 기준', '유리한 활용 전략'],
+          rows: [
+            ['신용카드', '기본 공제율 적용 (총급여 25% 초과분)', '총급여 25% 기준선 채우기 및 할인·적립 활용'],
+            ['체크카드·현금영수증', '신용카드 대비 높은 소득공제율 적용', '25% 초과 구간부터 집중 사용해 환급 극대화'],
+            ['전통시장·대중교통·세액공제', '추가 한도 및 세액공제 항목 별도 적용', '연말 전 누락 영수증·연금저축·IRP 한도 점검'],
+          ],
+        };
+        checklist = [
+          '홈택스 미리보기 또는 카드사 앱에서 올해 누적 사용액 먼저 조회하기',
+          '총급여 25% 기준선을 넘겼다면 체크카드·현금영수증 비중 높이기',
+          '연금저축·IRP·월세·의료비·교육비 등 놓치기 쉬운 세액공제 항목 점검하기',
+          '연말 소멸 예정 카드 포인트·멤버십 현금화 여부 함께 확인하기',
+        ];
+        highlightTip = '총급여 25%까지는 혜택 좋은 신용카드, 초과분은 공제율 높은 체크카드·현금영수증으로 나누는 것이 핵심입니다!';
+        oneLineReview = `${mainKw}, 연말 마감 전에 사용 비율과 누락 공제 항목만 챙겨도 환급액이 확 달라집니다 ⭐`;
+      } else if (isFood) {
+        comparisonTable = {
+          title: `📊 한눈에 보는 ${mainKw} 핵심 비교표`,
+          headers: ['비교 항목', '추천 선택 기준', '방문·주문 전 체크포인트'],
+          rows: [
+            ['맛·재료 구성', '원재료 신선도와 육수·소스 퀄리티', '맵기·간 조절 가능 여부 (아이 동반 시 필수)'],
+            ['양·가성비', '인원수 대비 실속 구성 및 1인당 단가', '사이드·음료 포함 시 총 지출 예상'],
+            ['편의성·접근성', '조리 시간(10분 내외) 또는 주차·웨이팅', '피크 타임 대기 여부 및 사전 예약·배송일 확인'],
+          ],
+        };
+        checklist = [
+          '함께 먹는 인원과 취향(아이 동반·매운맛 여부)에 맞는 메뉴 구성 확인하기',
+          '외식이라면 전용 주차장·아기의자·웨이팅 시간대 미리 체크하기',
+          '밀키트·택배라면 배송 일정, 보관 방법, 조리 소요 시간 확인하기',
+          '실제 구매·방문 리뷰에서 양과 간에 대한 솔직한 평가 참고하기',
+        ];
+        highlightTip = '인기 맛집이나 제철 먹거리는 피크 타임·주문 마감 시간만 살짝 피해도 훨씬 여유롭게 즐길 수 있어요!';
+        oneLineReview = `${mainKw}, 맛과 편의성 기준만 체크하면 가족 모두가 만족하는 한 끼를 즐길 수 있습니다 ⭐`;
+      } else if (isTravel) {
+        comparisonTable = {
+          title: `📊 한눈에 보는 ${mainKw} 핵심 비교표`,
+          headers: ['비교 항목', '추천 선택 기준', '예약·방문 전 주의사항'],
+          rows: [
+            ['위치·동선', '주차 편의성과 주변 식사·관광지 접근성', '겨울철 결빙·이동 소요 시간 여유 있게 잡기'],
+            ['시설·컨디션', '난방·온수풀 수온·청결도 및 침구 상태', '미온수 추가 요금·바비큐 이용료 별도 여부 확인'],
+            ['예약·가성비', '평일·얼리버드 특가 및 조식·레이트체크아웃', '인원 추가 비용과 취소·환불 규정 사전 체크'],
+          ],
+        };
+        checklist = [
+          '숙소 난방 상태, 미온수풀·온천 이용 시간 및 추가 요금 확인하기',
+          '주차 공간과 아이·부모님 동반 시 이동 동선 미리 점검하기',
+          '예약 플랫폼별 쿠폰·카드 할인·조식 포함 패키지 가격 비교하기',
+          '체크인 전 주변 맛집·편의점·비상용품 준비 리스트 챙기기',
+        ];
+        highlightTip = '숙소 예약 전 미온수·바비큐·인원 추가 비용을 포함한 최종 결제 금액으로 비교해야 실패가 없습니다!';
+        oneLineReview = `${mainKw}, 동선과 추가 비용만 꼼꼼히 체크하면 훨씬 편안하고 알찬 여행이 됩니다 ⭐`;
+      } else if (isLiving) {
+        comparisonTable = {
+          title: `📊 한눈에 보는 ${mainKw} 핵심 비교표`,
+          headers: ['비교 항목', '추천 기준', '실생활 적용 시 주의점'],
+          rows: [
+            ['효과·실용성', '설치·사용이 간편하고 체감 효과가 확실한 방식', '우리 집 공간 크기·구조에 맞는지 먼저 측정'],
+            ['안전·성분', '아이·가족이 함께 쓰는 공간에 자극 없는 구성', '환기 필요 여부 및 주의 표기사항 확인'],
+            ['유지·관리', '세척·교체 주기가 번거롭지 않고 유지비가 합리적', '소모품 교체 비용과 보관 공간 고려'],
+          ],
+        };
+        checklist = [
+          '우리 집 공간 크기와 해결하려는 문제(결로·수납·세탁 등) 명확히 정하기',
+          '가족이 매일 쓰는 공간이므로 안전성과 사용 편의성 우선 확인하기',
+          '일회성 소모품인지, 재사용·세척 가능한지 유지 비용 따져보기',
+          '실사용자들이 꼽은 단점과 관리 팁을 미리 보고 시작하기',
+        ];
+        highlightTip = '살림 꿀팁은 거창한 장비보다 매일 손이 가고 관리가 쉬운 방식을 고르는 것이 오래 갑니다!';
+        oneLineReview = `${mainKw}, 우리 집 환경에 딱 맞는 실용적인 기준만 잡으면 삶의 질이 확 올라갑니다 ⭐`;
+      } else {
+        comparisonTable = {
+          title: `📊 한눈에 보는 ${mainKw} 핵심 비교표`,
+          headers: ['체크 항목', '추천 기준', '확인할 포인트'],
+          rows: [
+            ['핵심 성능·기능', '실제 자주 쓰는 필수 기능이 탄탄한지 확인', '불필요한 고가 옵션보다 실사용 체감 위주'],
+            ['편의성·호환성', '내 기존 기기·생활 환경과 매끄럽게 맞는지', '무게·소음·충전/관리 편의성 체크'],
+            ['가성비·유지비', '초기 구매가 + 소모품·유지비 합산 비교', '국내 정발 AS 및 장기 실사용 후기 참고'],
+          ],
+        };
+        checklist = [
+          '내 사용 목적과 예산에 꼭 필요한 핵심 조건 2가지 먼저 정하기',
+          '매일 사용할 때 불편할 만한 소음·무게·관리 번거로움 체크하기',
+          '할인 혜택·카드 행사·정품 보증(AS) 여부 함께 비교하기',
+          '장기 실사용 후기에서 공통적으로 나오는 아쉬운 점 확인하기',
+        ];
+        highlightTip = '스펙표 숫자보다 내가 매일 실제로 쓰는 핵심 기능과 편의성을 기준으로 비교하면 후회가 없습니다!';
+        oneLineReview = `${mainKw}, 내 사용 환경에 맞는 기준만 세우면 가성비와 만족도를 동시에 잡을 수 있습니다 ⭐`;
+      }
+
+      if (!sections) {
+        sections = [
           {
             subtitle: `🔥 1. 지금 왜 '${mainKw}'에 주목할까?`,
             quote: topic.reason || '생활 속 체감 만족도가 높아 검색량이 빠르게 늘고 있는 핵심 주제입니다.',
             photoIndex: 1,
-            photoCaption: `여기에 대표 사진 삽입 (${mainKw} 핵심 이미지)`,
+            photoCaption: `${mainKw} 전체 대표 장면 및 핵심 분위기 사진`,
             paragraphs: [
-              `최근 생활 패턴과 계절 변화가 맞물리면서 **실용성과 가성비를 동시에 잡으려는 수요**가 크게 늘어나고 있어요 ✨`,
+              `계절 변화와 생활 패턴이 맞물리면서 **실용성과 가성비를 동시에 잡으려는 수요**가 크게 늘어나고 있어요 ✨`,
               `단순 유행이 아니라 ==실제 일상에서 체감되는 만족도가 높기 때문에== 꾸준히 검색량이 올라가는 추세입니다 ✔️`,
+              `특히 한 번 기준을 잡아두면 **불필요한 시행착오와 비용을 동시에 줄일 수 있다는 점**이 가장 큰 매력이에요.`,
             ],
           },
           {
-            subtitle: '🔍 2. 실패 없는 선택을 위한 핵심 기준 3가지',
-            quote: '무조건 비싼 것보다 내 생활 환경에 딱 맞는 조건을 따져보는 게 정답!',
+            subtitle: '📊 2. 체감 만족도를 가르는 핵심 차이점',
+            quote: '비슷해 보여도 조건과 방식에 따라 실제 체감 결과가 크게 달라집니다.',
             photoIndex: 2,
-            photoCaption: `여기에 비교 사진 삽입 (핵심 디테일 컷)`,
+            photoCaption: `${mainKw} 핵심 비교 포인트 또는 상세 화면 사진`,
             paragraphs: [
-              `첫째, **관리 편의성과 유지 비용**을 꼭 체크하세요. 아무리 좋아도 번거로우면 금방 손이 안 가게 됩니다 💡`,
-              `둘째, 실제 사용자들의 **장기 후기와 아쉬운 점**을 먼저 확인하면 ==시행착오 없이 만족스러운 선택==을 할 수 있어요 📌`,
-              `셋째, [[${kws.slice(0, 2).join(' · ')}]] 관련 최신 옵션이나 시즌 혜택을 함께 비교해 보는 것이 유리합니다.`,
+              `겉으로 보기엔 비슷해 보여도 **세부 조건과 실제 활용 방식의 차이**를 정확히 구분해야 후회가 없어요 💡`,
+              `내 환경과 맞지 않는 방식을 무작정 따르면 ==기대보다 만족도가 떨어지거나 비용이 더 드는 경우==도 적지 않답니다 📌`,
+              `그래서 처음부터 핵심 기준을 나란히 놓고 **장단점을 차분히 비교해 보는 습관**이 꼭 필요해요.`,
             ],
           },
           {
-            subtitle: '💡 3. 바로 써먹는 실전 활용 & 절약 꿀팁',
-            quote: '',
+            subtitle: '🏠 3. 우리 집·일상 환경에 맞춘 선택 기준',
+            quote: '남들의 추천보다 내 생활 공간과 이용 패턴에 딱 맞추는 것이 정답입니다.',
             photoIndex: 3,
-            photoCaption: `여기에 실사용 예시 또는 꿀팁 사진 삽입`,
+            photoCaption: `실내 공간·활용 환경 전체 뷰 사진`,
             paragraphs: [
-              `처음 시작하거나 구매할 때는 **가장 기본기가 탄탄한 베스트셀러 라인업**부터 비교해 보는 것이 안전해요 ✔️`,
-              `시즌 초 프로모션이나 ==리뷰 포인트·카드 할인 혜택==을 챙기면 체감 부담을 훨씬 낮출 수 있답니다 🔥`,
+              `누구나 똑같은 기준으로 고르기보다는 **함께 쓰는 가족 구성, 공간 조건, 이용 빈도**를 먼저 따져봐야 해요 🗺️`,
+              `내 상황에 맞는 기준만 잘 잡아도 ==불필요한 지출 없이 훨씬 안정적인 만족감==을 얻을 수 있답니다 ✨`,
+              `특히 [[${kws.slice(0, 2).join(' · ')}]] 관련 세부 포인트를 함께 살펴보면 선택이 한결 수월해집니다.`,
             ],
           },
           {
-            subtitle: '📝 4. 한눈에 정리하는 핵심 요약',
-            quote: '',
-            photoIndex: 0,
-            photoCaption: '',
+            subtitle: '⏰ 4. 시간대·상황별 똑똑한 활용 타이밍',
+            quote: '언제 어떻게 활용하느냐에 따라 체감 효율과 편의성이 확 달라집니다.',
+            photoIndex: 4,
+            photoCaption: `상황별 활용 세팅 또는 실사용 장면 사진`,
             paragraphs: [
-              `오늘 정리해 드린 [[${topic.title}]] 핵심 포인트만 기억하셔도 선택 고민이 절반 이하로 줄어드실 거예요 ✨`,
-              `아래 비교표와 체크리스트는 **저장해 두셨다가 필요할 때 바로 꺼내 보시길 추천**합니다!`,
+              `평일과 주말, 아침과 저녁처럼 **생활 리듬이 달라지는 구간**에 맞춰 활용하면 효율이 배가 돼요 ⏰`,
+              `복잡하게 접근하기보다 ==내 일상에 자연스럽게 녹아드는 루틴==으로 정해 두는 것이 오래 가는 비결입니다 ✔️`,
+              `작은 습관 변화만으로도 매일 느끼는 번거로움을 크게 줄일 수 있어요.`,
             ],
           },
+          {
+            subtitle: '💡 5. 실사용자가 챙기는 디테일 꿀팁',
+            quote: '',
+            photoIndex: 5,
+            photoCaption: `세부 디테일·활용 꿀팁 클로즈업 사진`,
+            paragraphs: [
+              `큰 기준 못지않게 중요한 것이 바로 **현장에서 체감되는 사소한 디테일**이에요 💡`,
+              `조금만 신경 써서 챙기면 ==전체 만족도가 눈에 띄게 올라가는 포인트==가 분명히 존재합니다 📌`,
+              `미리 알아두고 적용하면 훨씬 쾌적하고 알차게 활용하실 수 있어요.`,
+            ],
+          },
+          {
+            subtitle: '🔍 6. 놓치기 쉬운 숨은 체크포인트',
+            quote: '',
+            photoIndex: 6,
+            photoCaption: `놓치기 쉬운 세부 조건 확인 장면 사진`,
+            paragraphs: [
+              `대부분의 분들이 지나치기 쉬운 **부가 조건이나 숨은 비용·옵션**을 한 번 더 점검해 보시는 걸 추천해요 ✔️`,
+              `이런 작은 요소들이 쌓여 ==장기적인 만족도와 체감 비용의 차이==로 이어지는 경우가 많습니다 🔥`,
+              `한 번 체크해 두면 다음부터는 고민 없이 빠르게 결정할 수 있어요.`,
+            ],
+          },
+          {
+            subtitle: '⚠️ 7. 흔히 하는 실수와 피하는 방법',
+            quote: '성급한 선택이나 과도한 기대는 오히려 아쉬움을 부르기 쉽습니다.',
+            photoIndex: 7,
+            photoCaption: `주의해야 할 사용·선택 실수 예시 사진`,
+            paragraphs: [
+              `인기만 보고 덜컥 결정하거나 조건을 확인하지 않고 진행하면 **예상치 못한 불편함**을 겪기 쉽습니다 ⚠️`,
+              `핵심 항목 몇 가지만 차분히 따져보는 ==단계적 접근==이 훨씬 안전하고 경제적이에요 📌`,
+              `실수 사례를 미리 알아두면 같은 시행착오를 반복하지 않을 수 있습니다.`,
+            ],
+          },
+          {
+            subtitle: '💰 8. 비용·효율 관점에서 따져볼 점',
+            quote: '',
+            photoIndex: 8,
+            photoCaption: `비용·효율 비교 또는 혜택 확인 사진`,
+            paragraphs: [
+              `눈앞의 가격만 보기보다 **실제 사용 기간과 추가 비용·혜택 전체**를 함께 따져보는 것이 현명합니다 💳`,
+              `합리적인 기준을 세워 두면 ==예산 범위 안에서 가장 만족도 높은 선택==을 할 수 있어요 ✔️`,
+              `시즌 혜택이나 할인 조건도 함께 확인해 두면 체감 부담을 더 줄일 수 있습니다.`,
+            ],
+          },
+          {
+            subtitle: '📌 9. 실전 적용 전 최종 점검 사항',
+            quote: '',
+            photoIndex: 9,
+            photoCaption: `최종 점검 항목 확인 장면 사진`,
+            paragraphs: [
+              `본격적으로 시작하기 전에 **핵심 조건 몇 가지만 빠르게 훑어보는 습관**을 들여 보세요 📝`,
+              `미리 확인하고 움직이면 ==중간에 다시 바꾸거나 헤매는 시간==을 크게 아낄 수 있습니다 ✨`,
+              `아래 비교표와 체크리스트를 함께 참고하시면 훨씬 수월합니다.`,
+            ],
+          },
+          {
+            subtitle: '⭐ 10. 한눈에 보는 요약 및 마무리 가이드',
+            quote: '',
+            photoIndex: 10,
+            photoCaption: `전체 정리·마무리 활용 장면 사진`,
+            paragraphs: [
+              `오늘 정리해 드린 [[${topic.title}]] 핵심 내용만 잘 기억하셔도 선택과 활용이 한결 쉬워지실 거예요 🌟`,
+              `내 상황에 맞는 기준을 정해 두고 ==꾸준히 실천하는 것==이 가장 확실한 노하우입니다 ✔️`,
+              `필요할 때마다 다시 꺼내 보실 수 있도록 저장해 두시길 권해드려요!`,
+            ],
+          },
+        ];
+      }
+
+      return {
+        titles: [
+          `${topic.title} — 핵심 정리 및 실전 추천 가이드 ✨`,
+          `요즘 왜 이렇게 핫할까? ${mainKw} 실패 없이 적용하는 기준 총정리 📌`,
+          `필독 정리! ${topic.title} 비교표 & 체크리스트 총정리 💡`,
         ],
-        comparisonTable: {
-          title: `📊 한눈에 보는 ${mainKw} 핵심 비교표`,
-          headers: ['체크 항목', '추천 기준', '주의 포인트'],
-          rows: [
-            ['실용성·편의성', '매일 써도 번거롭지 않은 구조', '관리·세척 난이도 사전 확인'],
-            ['가성비·유지비', '초기 비용 + 소모품 비용 합산 비교', '단순 최저가보다 AS·품질 체크'],
-            ['실사용 만족도', '가족·일상 환경에 맞는 스펙 선택', '과장 광고보다 실사용 단점 참고'],
-          ],
-        },
+        introParagraphs: [
+          `요즘 검색창에서도 자주 보이고 주변에서도 관심이 뜨거운 [[${topic.title}]]!`,
+          `${topic.reason || '실생활에서 바로 도움이 되는 주제라 많은 분들이 찾고 있습니다.'} ==핵심 원리부터 실제 활용법, 피해야 할 실수까지== 단계별로 꼼꼼하게 정리해 드릴게요 📌`,
+          `사진 10장 구성에 맞춰 읽기 편하게 풀어냈으니 **오늘 바로 내 생활에 적용할 포인트**부터 체크해 보세요!`,
+        ],
+        sections,
+        comparisonTable,
         checklistTitle: `✅ ${mainKw} 최종 점검 체크리스트`,
-        checklist: [
-          '내 사용 환경과 예산에 딱 맞는 핵심 조건 2가지 먼저 정하기',
-          '관리·유지 보수가 간편한 구조인지 미리 확인하기',
-          '시즌 할인·특전·리뷰 혜택 적용 여부 체크하기',
-          '실제 사용자들이 꼽은 아쉬운 점을 수용할 수 있는지 점검하기',
-        ],
+        checklist,
         outroParagraphs: [
           tp.outro,
           `오늘 정리가 도움이 되셨다면 **공감(❤️)과 저장** 부탁드려요! 다음에도 생활에 꼭 필요한 꼼꼼한 정보로 돌아오겠습니다 😊`,
@@ -3071,8 +3392,8 @@
           placeName: topic.title,
           address: `${topic.category || '인기주제'} · ${todayStr} 최신 정리`,
           visitInfo: `추천 SEO 키워드: ${kws.join(', ')}`,
-          highlightTip: '비교표의 3가지 기준만 체크해도 실패 확률을 확 줄일 수 있어요!',
-          oneLineReview: `${mainKw}, 핵심 기준만 알면 가성비와 만족도를 동시에 잡을 수 있습니다 ⭐`,
+          highlightTip,
+          oneLineReview,
         },
         hashtags: Array.from(
           new Set([
@@ -3091,514 +3412,6 @@
       };
     }
 
-
-    // =========================================================================
-    // 10-B. 실시간 뜨는 주제용 실사/실제 이미지 10장 생성 엔진 (Gemini 이미지 생성 + 웹/사진 검색 Fallback + 장면 렌더링)
-    // =========================================================================
-    function buildVisualScenePrompt(topic, index, captionText) {
-      const cat = String(topic.category || '생활정보');
-      const title = String(topic.title || '');
-      const kw = String(topic.coreKeyword || (Array.isArray(topic.keywords) ? topic.keywords[0] : '') || '').replace(/^#+/, '');
-      const cap = String(captionText || '').trim();
-
-      let subjectHint = 'clean modern Korean lifestyle scene, natural daylight, realistic photography, high detail, no text overlays, no watermarks';
-      if (/보일러|난방|온도|조절기|겨울|결로|습도|매트/.test(title + ' ' + cap + ' ' + kw)) {
-        subjectHint = 'modern Korean apartment living room in winter, digital smart thermostat on wall, warm cozy indoor lighting, realistic editorial photo, no text, no watermark';
-      } else if (/가습기|청소기|마우스|키보드|충전기|태블릿|전자|가전|IT/.test(cat + ' ' + title + ' ' + cap)) {
-        subjectHint = 'sleek modern home appliance or desk gadget on a clean table in a bright Korean home, realistic product photography, soft natural shadows, no text, no watermark';
-      } else if (/맛집|밀키트|음식|먹거리|카페|피자|파스타|방어|간식/.test(cat + ' ' + title + ' ' + cap)) {
-        subjectHint = 'appetizing Korean meal and table setting in warm natural light, realistic food photography, shallow depth of field, no text, no watermark';
-      } else if (/숙소|여행|풀빌라|온천|호캉스|캠핑/.test(cat + ' ' + title + ' ' + cap)) {
-        subjectHint = 'inviting Korean travel staycation or warm resort lounge with scenic view, realistic travel photography, natural daylight, no text, no watermark';
-      } else if (/살림|생활용품|세제|정리|수납|세탁/.test(cat + ' ' + title + ' ' + cap)) {
-        subjectHint = 'neatly organized bright Korean home interior and everyday household items, realistic interior photography, no text, no watermark';
-      }
-
-      return `Realistic photograph for blog article "${title}" (topic: ${kw || cat}, scene ${index}/10: ${cap || kw}). ${subjectHint}.`;
-    }
-
-    function buildPhotoSearchKeywords(topic, index, captionText) {
-      const cat = String(topic.category || '').trim();
-      const kw = String(topic.coreKeyword || (Array.isArray(topic.keywords) ? topic.keywords[0] : '') || '').replace(/^#+/, '').trim();
-      const cap = String(captionText || '').trim();
-
-      const queries = [];
-      if (kw && cap) queries.push(`${kw} ${cap}`);
-      if (kw) queries.push(`${kw} 사진`);
-      if (cap) queries.push(cap);
-      if (cat && cat !== '전체 핫이슈') queries.push(`${cat} 사진`);
-      queries.push(`lifestyle photography ${index}`);
-      return queries;
-    }
-
-    function loadImageFromUrlToDataUrl(url, timeoutMs = 4500) {
-      return new Promise((resolve) => {
-        if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
-          resolve('');
-          return;
-        }
-        let settled = false;
-        const done = (val) => {
-          if (!settled) {
-            settled = true;
-            clearTimeout(timer);
-            resolve(val || '');
-          }
-        };
-        const timer = setTimeout(() => done(''), timeoutMs);
-
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          try {
-            if (!img.width || !img.height) {
-              done('');
-              return;
-            }
-            const canvas = document.createElement('canvas');
-            const maxW = 960;
-            let w = img.width;
-            let h = img.height;
-            if (w > maxW) {
-              h = Math.round((h * maxW) / w);
-              w = maxW;
-            }
-            canvas.width = w;
-            canvas.height = h;
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, w, h);
-            ctx.drawImage(img, 0, 0, w, h);
-            done(canvas.toDataURL('image/jpeg', 0.86));
-          } catch (_) {
-            done('');
-          }
-        };
-        img.onerror = () => done('');
-        img.src = url;
-      });
-    }
-
-    async function searchMatchedPhotosForTopic(topic, tenCaptions) {
-      const kw = String(topic.coreKeyword || (Array.isArray(topic.keywords) ? topic.keywords[0] : '') || topic.category || 'lifestyle')
-        .replace(/^#+/, '')
-        .trim();
-      const candidateUrls = [];
-      const seen = new Set();
-
-      const addCandidate = (u) => {
-        if (typeof u === 'string' && /^https?:\/\//i.test(u.trim())) {
-          const clean = u.trim();
-          if (!seen.has(clean) && !/doubleclick|googlesyndication|adservice|favicon/i.test(clean)) {
-            seen.add(clean);
-            candidateUrls.push(clean);
-          }
-        }
-      };
-
-      // 1) Gemini Search Grounding으로 주제 관련 이미지 URL 수집 시도
-      const activeKey = state.userApiKey.trim() || runtimeApiKey;
-      if (activeKey && state.mode !== 'offline') {
-        try {
-          const queryPrompt = `Find direct image URLs (jpg/jpeg/png/webp) related to "${kw}" and "${topic.title}". Return JSON array of image URLs only: {"images":["https://..."]}`;
-          const searchRes = await invokeGemini({
-            payload: {
-              contents: [{ role: 'user', parts: [{ text: queryPrompt }] }],
-            },
-            useSearch: true,
-          });
-          const urlMatches = String(searchRes.text || '').match(/https?:\/\/[^\s"'<>)\]]+\.(?:jpg|jpeg|png|webp)(?:\?[^\s"'<>)\]]*)?/gi) || [];
-          urlMatches.forEach(addCandidate);
-
-          (searchRes.sources || []).forEach((srcItem) => {
-            if (srcItem?.uri && /\.(?:jpg|jpeg|png|webp)/i.test(srcItem.uri)) {
-              addCandidate(srcItem.uri);
-            }
-          });
-        } catch (_) {}
-      }
-
-      // 2) Wikimedia Commons / Openverse 공개 사진 검색 API로 주제 키워드 사진 자동 탐색
-      const searchTerms = Array.from(
-        new Set([
-          kw,
-          `${kw} ${tenCaptions[0] || ''}`.trim(),
-          String(topic.category || '').replace('·', ' ').trim(),
-        ].filter(Boolean))
-      );
-
-      for (let t = 0; t < searchTerms.length && candidateUrls.length < 18; t++) {
-        const term = searchTerms[t];
-        try {
-          const wikiUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(term)}&gsrlimit=8&prop=imageinfo&iiprop=url&iiurlwidth=960&format=json&origin=*`;
-          const resp = await fetch(wikiUrl);
-          if (resp.ok) {
-            const json = await resp.json();
-            const pages = json?.query?.pages ? Object.values(json.query.pages) : [];
-            pages.forEach((pg) => {
-              const info = pg?.imageinfo?.[0];
-              const u = info?.thumburl || info?.url;
-              if (u && /\.(?:jpg|jpeg|png|webp)/i.test(u)) {
-                addCandidate(u);
-              }
-            });
-          }
-        } catch (_) {}
-      }
-
-      // 실제 CORS 로드가 가능한 사진만 DataURL로 변환해 확보
-      const verifiedPhotos = [];
-      for (let i = 0; i < candidateUrls.length && verifiedPhotos.length < 10; i++) {
-        const dataUrl = await loadImageFromUrlToDataUrl(candidateUrls[i], 4000);
-        if (dataUrl) {
-          verifiedPhotos.push({
-            dataUrl,
-            base64: dataUrl.split(',')[1] || '',
-            isFallback: false,
-            sourceType: 'matched-search',
-          });
-        }
-      }
-
-      return verifiedPhotos;
-    }
-
-    function createRealisticSceneFallbackDataUrl(topic, index, captionText) {
-      const canvas = document.createElement('canvas');
-      canvas.width = 960;
-      canvas.height = 640;
-      const ctx = canvas.getContext('2d');
-
-      const title = String(topic.title || '');
-      const cap = String(captionText || '');
-      const isBoiler = /보일러|난방|온도|조절기|외출|예약/.test(title + ' ' + cap);
-
-      if (isBoiler) {
-        const wallGrad = ctx.createLinearGradient(0, 0, 0, 640);
-        wallGrad.addColorStop(0, '#f3efe6');
-        wallGrad.addColorStop(0.72, '#e8e2d5');
-        wallGrad.addColorStop(0.72, '#c8a97e');
-        wallGrad.addColorStop(1, '#a9875a');
-        ctx.fillStyle = wallGrad;
-        ctx.fillRect(0, 0, 960, 640);
-
-        const winGrad = ctx.createLinearGradient(560, 70, 880, 340);
-        winGrad.addColorStop(0, '#fffbeb');
-        winGrad.addColorStop(1, '#bae6fd');
-        ctx.fillStyle = winGrad;
-        ctx.beginPath();
-        ctx.roundRect(570, 75, 310, 250, 16);
-        ctx.fill();
-        ctx.strokeStyle = '#cbd5e1';
-        ctx.lineWidth = 8;
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(725, 75);
-        ctx.lineTo(725, 325);
-        ctx.moveTo(570, 200);
-        ctx.lineTo(880, 200);
-        ctx.stroke();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.shadowColor = 'rgba(15, 23, 42, 0.16)';
-        ctx.shadowBlur = 24;
-        ctx.shadowOffsetY = 10;
-        ctx.beginPath();
-        ctx.roundRect(140, 120, 270, 210, 24);
-        ctx.fill();
-        ctx.shadowColor = 'transparent';
-
-        ctx.strokeStyle = '#cbd5e1';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        const lcdColor = (index % 2 === 1) ? '#0f172a' : '#064e3b';
-        ctx.fillStyle = lcdColor;
-        ctx.beginPath();
-        ctx.roundRect(166, 144, 218, 112, 14);
-        ctx.fill();
-
-        ctx.fillStyle = '#34d399';
-        ctx.font = 'bold 16px "Pretendard", "Noto Sans KR", sans-serif';
-        ctx.fillText((index % 2 === 1) ? 'OUTING MODE · 16°C' : 'SCHEDULE MODE · 22°C', 184, 174);
-
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 42px "Pretendard", "Noto Sans KR", sans-serif';
-        ctx.fillText((index % 2 === 1) ? '16.0°' : '22.0°', 184, 228);
-
-        const btnColors = ['#e2e8f0', '#dcfce7', '#fef3c7', '#e0f2fe'];
-        for (let b = 0; b < 4; b++) {
-          ctx.fillStyle = btnColors[b];
-          ctx.beginPath();
-          ctx.roundRect(172 + b * 53, 272, 44, 34, 8);
-          ctx.fill();
-        }
-
-        ctx.fillStyle = '#64748b';
-        ctx.beginPath();
-        ctx.roundRect(110, 420, 430, 95, 22);
-        ctx.fill();
-        ctx.fillStyle = '#475569';
-        ctx.beginPath();
-        ctx.roundRect(125, 385, 400, 48, 16);
-        ctx.fill();
-      } else {
-        const bgGrad = ctx.createLinearGradient(0, 0, 960, 640);
-        const themes = [
-          ['#f8fafc', '#dcfce7', '#059669'],
-          ['#fffbeb', '#fef3c7', '#d97706'],
-          ['#f0f9ff', '#e0f2fe', '#0284c7'],
-          ['#fdf4ff', '#fae8ff', '#9333ea'],
-          ['#f0fdf4', '#ccfbf1', '#0d9488'],
-        ];
-        const th = themes[(index - 1) % themes.length];
-        bgGrad.addColorStop(0, th[0]);
-        bgGrad.addColorStop(1, th[1]);
-        ctx.fillStyle = bgGrad;
-        ctx.fillRect(0, 0, 960, 640);
-
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
-        ctx.beginPath();
-        ctx.arc(730, 210, 190, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.arc(260, 440, 220, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.shadowColor = 'rgba(15, 23, 42, 0.12)';
-        ctx.shadowBlur = 28;
-        ctx.shadowOffsetY = 12;
-        ctx.beginPath();
-        ctx.roundRect(180, 110, 600, 360, 28);
-        ctx.fill();
-        ctx.shadowColor = 'transparent';
-
-        ctx.fillStyle = th[2];
-        ctx.beginPath();
-        ctx.arc(480, 255, 76, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 34px "Pretendard", "Noto Sans KR", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(String(index), 480, 267);
-        ctx.textAlign = 'left';
-
-        ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 26px "Pretendard", "Noto Sans KR", sans-serif';
-        const shortCap = (cap || topic.coreKeyword || '핵심 장면').slice(0, 36);
-        ctx.fillText(shortCap, 225, 385);
-
-        ctx.fillStyle = '#64748b';
-        ctx.font = '600 18px "Pretendard", "Noto Sans KR", sans-serif';
-        ctx.fillText(`${topic.category || '블로그'} · 실사용/정보 이미지 ${index}/10`, 225, 424);
-      }
-
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
-      return {
-        index,
-        caption: captionText,
-        dataUrl,
-        base64: dataUrl.split(',')[1] || '',
-        isFallback: true,
-        sourceType: 'scene-canvas',
-      };
-    }
-
-    async function tryGenerateAiPhotoForSlot(topic, index, captionText) {
-      const activeKey = state.userApiKey.trim() || runtimeApiKey;
-      if (!activeKey || state.mode === 'offline') {
-        return null;
-      }
-
-      const promptText = buildVisualScenePrompt(topic, index, captionText);
-      const models = ['imagen-3.0-generate-002', 'gemini-2.0-flash-exp-image-generation'];
-
-      for (let i = 0; i < models.length; i++) {
-        const m = models[i];
-        try {
-          if (m.startsWith('imagen-')) {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:predict?key=${encodeURIComponent(activeKey)}`;
-            const resp = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                instances: [{ prompt: promptText }],
-                parameters: { sampleCount: 1, aspectRatio: '4:3' },
-              }),
-            });
-            if (!resp.ok) continue;
-            const json = await resp.json();
-            const b64 = json?.predictions?.[0]?.bytesBase64Encoded;
-            const mime = json?.predictions?.[0]?.mimeType || 'image/png';
-            if (b64) {
-              return {
-                index,
-                caption: captionText,
-                dataUrl: `data:${mime};base64,${b64}`,
-                base64: b64,
-                isFallback: false,
-                sourceType: 'ai-image',
-              };
-            }
-          } else {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(activeKey)}`;
-            const resp = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ role: 'user', parts: [{ text: promptText }] }],
-                generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-              }),
-            });
-            if (!resp.ok) continue;
-            const json = await resp.json();
-            const parts = json?.candidates?.[0]?.content?.parts || [];
-            const inlinePart = parts.find((p) => p?.inlineData?.data);
-            if (inlinePart) {
-              const mime = inlinePart.inlineData.mimeType || 'image/jpeg';
-              const b64 = inlinePart.inlineData.data;
-              return {
-                index,
-                caption: captionText,
-                dataUrl: `data:${mime};base64,${b64}`,
-                base64: b64,
-                isFallback: false,
-                sourceType: 'ai-image',
-              };
-            }
-          }
-        } catch (_) {}
-      }
-
-      return null;
-    }
-
-    async function generateTenTrendPhotos(topic, postData) {
-      const kws = Array.isArray(topic.keywords) && topic.keywords.length > 0 ? topic.keywords : [topic.coreKeyword || '핵심정보'];
-      const mainKw = String(topic.coreKeyword || kws[0] || '핵심주제').replace(/^#+/, '');
-      const secCaptions = (Array.isArray(postData?.sections) ? postData.sections : [])
-        .map((s) => s?.photoCaption || s?.subtitle || '')
-        .filter(Boolean);
-
-      const defaultTenCaptions = [
-        `${mainKw} 대표 장면 컷`,
-        `${mainKw} 실내 환경 컷`,
-        `${mainKw} 상세 설정/디테일 컷`,
-        `${mainKw} 비교 포인트 컷`,
-        `${mainKw} 실사용 장면 컷`,
-        `${mainKw} 활용 팁 컷`,
-        `${mainKw} 체크포인트 컷`,
-        `${mainKw} 주의사항 컷`,
-        `${mainKw} 추가 디테일 컷`,
-        `${mainKw} 마무리 장면 컷`,
-      ];
-
-      const tenCaptions = [];
-      for (let i = 0; i < 10; i++) {
-        tenCaptions.push(secCaptions[i] || defaultTenCaptions[i]);
-      }
-
-      const cards = tenCaptions.map((cap, idx) => createRealisticSceneFallbackDataUrl(topic, idx + 1, cap));
-      const activeKey = state.userApiKey.trim() || runtimeApiKey;
-
-      // 1단계: AI 이미지 생성 모델 시도
-      const missingIndexes = [];
-      if (activeKey && state.mode !== 'offline') {
-        const aiResults = await Promise.allSettled(
-          tenCaptions.map((cap, idx) => tryGenerateAiPhotoForSlot(topic, idx + 1, cap))
-        );
-        aiResults.forEach((res, idx) => {
-          if (res.status === 'fulfilled' && res.value && res.value.dataUrl) {
-            cards[idx] = res.value;
-          } else {
-            missingIndexes.push(idx);
-          }
-        });
-      } else {
-        for (let i = 0; i < 10; i++) missingIndexes.push(i);
-      }
-
-      // 2단계: 이미지 생성 모델 미응답/실패 슬롯에 대해 주제 맞춤형 사진 검색 fallback 자동 삽입
-      if (missingIndexes.length > 0) {
-        const searchedPhotos = await searchMatchedPhotosForTopic(topic, tenCaptions);
-        for (let s = 0; s < searchedPhotos.length && s < missingIndexes.length; s++) {
-          const slotIdx = missingIndexes[s];
-          const picked = searchedPhotos[s];
-          cards[slotIdx] = {
-            index: slotIdx + 1,
-            caption: tenCaptions[slotIdx],
-            dataUrl: picked.dataUrl,
-            base64: picked.base64,
-            isFallback: false,
-            sourceType: picked.sourceType,
-          };
-        }
-      }
-
-      const promptLines = cards.map((cardItem, idx) => {
-        const num = idx + 1;
-        const cap = String(cardItem?.caption || tenCaptions[idx] || '').trim();
-        return `🖼️ 생성 사진 ${num} / 10: ${cap}`;
-      });
-      state.photoPromptTexts = promptLines;
-
-      return cards;
-    }
-
-    window.copySingleGeneratedPhoto = async function (imgIndex) {
-      const target = (state.generatedImages || []).find((g) => g.index === imgIndex);
-      if (!target || !target.dataUrl) {
-        showToast('복사할 이미지를 찾지 못했어요.', 'error');
-        return;
-      }
-
-      try {
-        if (navigator.clipboard && typeof navigator.clipboard.write === 'function' && window.ClipboardItem) {
-          const resp = await fetch(target.dataUrl);
-          const blob = await resp.blob();
-          const pngBlob = blob.type === 'image/png' ? blob : await new Promise((resolve) => {
-            const img = new Image();
-            img.onload = () => {
-              const c = document.createElement('canvas');
-              c.width = img.width || 960;
-              c.height = img.height || 640;
-              c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-              c.toBlob((b) => resolve(b || blob), 'image/png');
-            };
-            img.onerror = () => resolve(blob);
-            img.src = target.dataUrl;
-          });
-          await navigator.clipboard.write([
-            new ClipboardItem({ [pngBlob.type || 'image/png']: pngBlob }),
-          ]);
-          showToast(`생성 사진 #${imgIndex} 복사 완료! 네이버 블로그에 Ctrl+V 하세요 🖼️`);
-          return;
-        }
-      } catch (_) {}
-
-      try {
-        const imgEl = el.blogEditableBody.querySelector(`img[data-generated-photo-index="${imgIndex}"]`);
-        if (imgEl) {
-          const range = document.createRange();
-          range.selectNode(imgEl);
-          const sel = window.getSelection();
-          sel.removeAllRanges();
-          sel.addRange(range);
-          const ok = document.execCommand('copy');
-          sel.removeAllRanges();
-          if (ok) {
-            showToast(`생성 사진 #${imgIndex} 복사 완료! 붙여넣기(Ctrl+V) 해보세요 🖼️`);
-            return;
-          }
-        }
-      } catch (_) {}
-
-      showToast('브라우저 권한상 이미지를 길게 누르거나 우클릭해 [이미지 복사]를 눌러주세요 💡', 'info');
-    };
 
     // =========================================================================
     // 11. 마크업 파싱 & 우측 네이버 블로그 결과 렌더링 (renderPostResult)
@@ -3668,9 +3481,6 @@
       const safePost = postData || {};
       const safeSources = Array.isArray(sources) ? sources : [];
       const activePhotos = Array.isArray(options.photos) ? options.photos : [];
-      const generatedPhotos = Array.isArray(options.generatedPhotos) && options.generatedPhotos.length > 0
-        ? options.generatedPhotos
-        : (Array.isArray(state.generatedImages) ? state.generatedImages : []);
       const sourceLabel = options.sourceLabel || '';
 
       el.emptyState.classList.add('hidden');
@@ -3689,9 +3499,7 @@
       // 상단 사진생성용 텍스트(1~10) 영역 업데이트 (트렌드 10장 생성 시 표시, 사진 리뷰 시 숨김)
       const promptLinesToShow = Array.isArray(options.photoPromptTexts) && options.photoPromptTexts.length > 0
         ? options.photoPromptTexts
-        : (generatedPhotos.length > 0
-            ? generatedPhotos.map((g, idx) => `🖼️ 생성 사진 ${g.index || (idx + 1)} / 10: ${String(g.caption || '').trim()}`)
-            : []);
+        : [];
 
       if (el.photoPromptBox && el.photoPromptTextArea) {
         if (promptLinesToShow.length > 0) {
@@ -3750,46 +3558,8 @@
           const photoObj = activePhotos[pIdx - 1];
           const captionText = sec.photoCaption || photoObj.caption || `사진 ${pIdx}`;
           html += buildPhotoSlotHtml(pIdx, photoObj.dataUrl, captionText);
-        } else if (generatedPhotos.length > 0) {
-          // 섹션마다 최대 2장씩 10장의 직접 생성 사진을 본문에 고르게 배치
-          const startGenIdx = secIdx * 2;
-          const endGenIdx = secIdx === 3 ? generatedPhotos.length : Math.min(generatedPhotos.length, startGenIdx + 2);
-          for (let gPos = startGenIdx; gPos < endGenIdx; gPos++) {
-            const gImg = generatedPhotos[gPos];
-            if (gImg && !renderedPhotoIndexes.has(gImg.index)) {
-              renderedPhotoIndexes.add(gImg.index);
-              const capTxt = (gPos === startGenIdx && sec.photoCaption) ? sec.photoCaption : gImg.caption;
-              const explicitSlotText = capTxt
-                ? `[📷 사진 ${gImg.index} / 10 삽입 위치: ${capTxt}]`
-                : `[📷 사진 ${gImg.index} / 10 삽입 위치]`;
-              html += `
-                <div
-                  class="photo-slot-card generated-trend-photo"
-                  data-photo-index="${gImg.index}"
-                  data-photo-caption="${escapeHtml(capTxt || '')}"
-                  contenteditable="false"
-                  style="display:${el.includePhotoGuideToggle.checked ? 'block' : 'none'}; margin:18px 0; padding:12px 14px; background-color:#F0FDF4; border:1.5px solid #6EE7B7; border-radius:12px;"
-                >
-                  <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
-                    <span style="font-size:13.5px; font-weight:800; color:#047857;">${escapeHtml(explicitSlotText)}</span>
-                    <button
-                      type="button"
-                      onclick="window.copySingleGeneratedPhoto(${gImg.index})"
-                      style="padding:5px 10px; border-radius:8px; background:#03C75A; color:#ffffff; font-size:11.5px; font-weight:800; border:none; cursor:pointer;"
-                    >📋 사진 ${gImg.index} 복사</button>
-                  </div>
-                  <p style="font-size:12.5px; font-weight:700; color:#065F46; background:#ECFDF5; padding:6px 10px; border-radius:8px; margin:0 0 10px 0;">${escapeHtml(explicitSlotText)}</p>
-                  <img
-                    src="${gImg.dataUrl}"
-                    data-generated-photo-index="${gImg.index}"
-                    alt="${escapeHtml(explicitSlotText)}"
-                    style="width:100%; max-height:340px; object-fit:cover; border-radius:10px; display:block;"
-                  />
-                </div>
-              `;
-            }
-          }
-        } else if (pIdx > 0 && activePhotos.length === 0) {
+        } else if (pIdx > 0 && activePhotos.length === 0 && !renderedPhotoIndexes.has(pIdx)) {
+          renderedPhotoIndexes.add(pIdx);
           html += buildPhotoSlotHtml(pIdx, null, sec.photoCaption || `여기에 관련 사진 삽입 (${secIdx + 1})`);
         }
 
@@ -3807,40 +3577,8 @@
         }
       });
 
-      // 미배치 생성 사진(1~10장) 자동 보충
-      generatedPhotos.forEach((gImg) => {
-        if (gImg && !renderedPhotoIndexes.has(gImg.index)) {
-          renderedPhotoIndexes.add(gImg.index);
-          const explicitUnplacedText = gImg.caption
-            ? `[📷 사진 ${gImg.index} / 10 삽입 위치: ${gImg.caption}]`
-            : `[📷 사진 ${gImg.index} / 10 삽입 위치]`;
-          html += `
-            <div
-              class="photo-slot-card generated-trend-photo"
-              data-photo-index="${gImg.index}"
-              data-photo-caption="${escapeHtml(gImg.caption || '')}"
-              contenteditable="false"
-              style="display:${el.includePhotoGuideToggle.checked ? 'block' : 'none'}; margin:18px 0; padding:12px 14px; background-color:#F0FDF4; border:1.5px solid #6EE7B7; border-radius:12px;"
-            >
-              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
-                <span style="font-size:13.5px; font-weight:800; color:#047857;">${escapeHtml(explicitUnplacedText)}</span>
-                <button
-                  type="button"
-                  onclick="window.copySingleGeneratedPhoto(${gImg.index})"
-                  style="padding:5px 10px; border-radius:8px; background:#03C75A; color:#ffffff; font-size:11.5px; font-weight:800; border:none; cursor:pointer;"
-                >📋 사진 ${gImg.index} 복사</button>
-              </div>
-              <p style="font-size:12.5px; font-weight:700; color:#065F46; background:#ECFDF5; padding:6px 10px; border-radius:8px; margin:0 0 10px 0;">${escapeHtml(explicitUnplacedText)}</p>
-              <img
-                src="${gImg.dataUrl}"
-                data-generated-photo-index="${gImg.index}"
-                alt="${escapeHtml(explicitUnplacedText)}"
-                style="width:100%; max-height:340px; object-fit:cover; border-radius:10px; display:block;"
-              />
-            </div>
-          `;
-        }
-      });
+
+
 
       // 4) 비교표 (탭 2 또는 포함 시)
       if (
@@ -3985,7 +3723,7 @@
             <div class="flex items-stretch gap-2">
               <button
                 type="button"
-                onclick="selectTitle(${idx})"
+                data-select-title-idx="${idx}"
                 class="flex-1 text-left px-3.5 py-2.5 rounded-xl border transition flex items-start gap-2.5 ${
                   isSelected
                     ? 'bg-white border-[#03C75A] ring-2 ring-emerald-100 shadow-sm'
@@ -3999,7 +3737,7 @@
               </button>
               <button
                 type="button"
-                onclick="copySpecificTitle(${idx})"
+                data-copy-title-idx="${idx}"
                 class="px-3 rounded-xl border border-slate-200 bg-white hover:bg-emerald-50 hover:border-[#03C75A] text-slate-600 hover:text-emerald-700 text-xs font-bold transition shrink-0"
                 title="이 제목만 복사"
               >복사</button>
@@ -4116,38 +3854,18 @@
       const includeFixedOutro = el.includeFixedOutroToggle.checked;
       const clone = el.blogEditableBody.cloneNode(true);
 
-      // 사진 위치 안내 카드 및 직접 생성 사진(10장) 처리
+      // 사진 위치 안내 카드 처리
       clone.querySelectorAll('.photo-slot-card').forEach((card) => {
-        const isGenerated = card.classList.contains('generated-trend-photo');
-        const imgTag = card.querySelector('img');
         if (includePhotoGuide) {
           const idx = card.getAttribute('data-photo-index');
           const cap = card.getAttribute('data-photo-caption') || '';
-          if (isGenerated && imgTag && imgTag.src) {
-            const wrapper = document.createElement('div');
-            wrapper.setAttribute('style', 'margin:18px 0; text-align:center;');
-            const guideLine = document.createElement('p');
-            guideLine.setAttribute(
-              'style',
-              'background-color:#F0FDF4; color:#047857; font-weight:700; padding:10px 14px; border-radius:8px; margin:0 0 10px 0; font-size:14px; text-align:left;'
-            );
-            guideLine.textContent = cap ? `[📷 사진 ${idx} 삽입 위치: ${cap}]` : `[📷 사진 ${idx} 삽입 위치]`;
-            const cleanImg = document.createElement('img');
-            cleanImg.setAttribute('src', imgTag.src);
-            cleanImg.setAttribute('alt', cap || `생성 사진 ${idx}`);
-            cleanImg.setAttribute('style', 'max-width:100%; height:auto; border-radius:8px; display:block; margin:0 auto;');
-            wrapper.appendChild(guideLine);
-            wrapper.appendChild(cleanImg);
-            card.replaceWith(wrapper);
-          } else {
-            const markerP = document.createElement('p');
-            markerP.setAttribute(
-              'style',
-              'background-color:#F0FDF4; color:#047857; font-weight:700; padding:10px 14px; border-radius:8px; margin:18px 0; font-size:14px;'
-            );
-            markerP.textContent = cap ? `[📷 사진 ${idx} 삽입 위치: ${cap}]` : `[📷 사진 ${idx} 삽입 위치]`;
-            card.replaceWith(markerP);
-          }
+          const markerP = document.createElement('p');
+          markerP.setAttribute(
+            'style',
+            'background-color:#F0FDF4; color:#047857; font-weight:700; padding:10px 14px; border-radius:8px; margin:18px 0; font-size:14px;'
+          );
+          markerP.textContent = cap ? `[📷 사진 ${idx} 삽입 위치: ${cap}]` : `[📷 사진 ${idx} 삽입 위치]`;
+          card.replaceWith(markerP);
         } else {
           card.remove();
         }
@@ -4440,6 +4158,33 @@
       } catch (_) {}
       updateHistoryUI();
       showToast('최근 기록을 모두 삭제했어요.', 'info');
+    });
+
+
+    // 동적 생성 버튼 모바일 터치/클릭 이벤트 위임 보강
+    el.trendCardsList.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-trend-idx]');
+      if (btn) {
+        e.preventDefault();
+        const idx = Number(btn.getAttribute('data-trend-idx'));
+        if (!Number.isNaN(idx)) window.generatePostFromTrend(idx);
+      }
+    });
+
+    el.titleChoices.addEventListener('click', (e) => {
+      const selBtn = e.target.closest('button[data-select-title-idx]');
+      if (selBtn) {
+        e.preventDefault();
+        const idx = Number(selBtn.getAttribute('data-select-title-idx'));
+        if (!Number.isNaN(idx)) window.selectTitle(idx);
+        return;
+      }
+      const copyBtn = e.target.closest('button[data-copy-title-idx]');
+      if (copyBtn) {
+        e.preventDefault();
+        const idx = Number(copyBtn.getAttribute('data-copy-title-idx'));
+        if (!Number.isNaN(idx)) window.copySpecificTitle(idx);
+      }
     });
 
     // =========================================================================
